@@ -1,0 +1,20 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run Tarpaulin Coverage",
+            "type": "shell",
+            "command": "cargo tarpaulin --workspace --follow-exec --out Html --output-dir target/tarpaulin; Start-Process target/tarpaulin/tarpaulin-report.html",
+            "group": {
+                "kind": "test",
+                "isDefault": false
+            },
+            "presentation": {
+                "reveal": "never",
+                "panel": "new",
+                "showReuseMessage": false,
+            },
+            "problemMatcher": []
+        },
+    ]
+}

@@ -1,0 +1,9 @@
+[package]
+name = "split_by_discriminant"
+version = "0.1.0"
+edition = "2024"
+authors = ["Dave Lee <dave@gray101.com>"]
+license = "MIT"
+description = "A small utility for partitioning a sequence of items by enum discriminant"
+
+[dependencies]
