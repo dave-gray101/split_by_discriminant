@@ -211,8 +211,12 @@ pub trait Extract<U> {
 /// let mut split3 = split_by_discriminant(owned.into_iter(), &[a_disc]);
 /// assert_eq!(split3.group(a_disc).unwrap().len(), 1);
 /// ```
-/// Core implementation used by both mutable and immutable variants.
-fn split_by_discriminant_generic<T, I, K, R>(
+///
+/// The return type reflects the borrow kind of the iterator.  Passing a
+/// mutable container yields `SplitByDiscriminant<T, &mut T>`, an immutable
+/// borrow gives `SplitByDiscriminant<T, &T>`, and an owning iterator results in
+/// `SplitByDiscriminant<T, T>`.
+pub fn split_by_discriminant<T, I, K, R>(
     items: I,
     kinds: K,
 ) -> SplitByDiscriminant<T, R>
@@ -242,61 +246,6 @@ where
     SplitByDiscriminant { groups, others }
 }
 
-/// Partition a sequence of elements into groups keyed by enum discriminant.
-///
-/// The public `split_by_discriminant` function is completely generic over the
-/// iterator producing the elements.  You may pass it a mutable or an immutable
-/// container and the return type will reflect the reference kind:
-///
-/// * `&mut [T]`, `&mut Vec<T>` ⇒ `SplitByDiscriminant<T, &mut T>`
-/// * `&[T]`, `&Vec<T>` ⇒ `SplitByDiscriminant<T, &T>`
-///
-/// The returned struct is the same either way; methods such as
-/// [`SplitByDiscriminant::extract`] are only available when you supply mutable
-/// references this time, thanks to trait bounds on the implementation.
-///
-/// The result type embeds the reference kind directly; callers rarely need
-/// to annotate it explicitly.
-///
-/// # Examples
-///
-/// ```rust
-/// use split_by_discriminant::{split_by_discriminant, Extract};
-/// use std::mem::discriminant;
-///
-/// #[derive(Debug)]
-/// enum E { A(i32), B }
-///
-/// impl Extract<i32> for E {
-///     fn extract(&mut self) -> Option<&mut i32> {
-///         if let E::A(v) = self { Some(v) } else { None }
-///     }
-/// }
-///
-/// let mut mut_data = [E::A(1), E::B];
-/// let a_disc = discriminant(&E::A(0));
-///
-/// // mutable collection: mutable return type
-/// let mut split1 = split_by_discriminant(&mut mut_data, &[a_disc]);
-/// split1.extract::<i32>(a_disc);
-///
-/// let data = [E::A(2), E::B];
-/// // immutable collection: immutable return type
-/// let mut split2 = split_by_discriminant(&data, &[a_disc]);
-/// assert_eq!(split2.group(a_disc).unwrap().len(), 1);
-/// ```
-pub fn split_by_discriminant<T, I, K, R>(
-    items: I,
-    kinds: K,
-) -> SplitByDiscriminant<T, R>
-where
-    I: IntoIterator<Item = R>,
-    R: Borrow<T>,
-    K: IntoIterator,
-    K::Item: Borrow<Discriminant<T>>, 
-{
-    split_by_discriminant_generic(items, kinds)
-}
 
 #[cfg(test)]
 mod tests;
