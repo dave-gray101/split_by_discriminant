@@ -5,5 +5,7 @@ edition = "2024"
 authors = ["Dave Lee <dave@gray101.com>"]
 license = "MIT"
 description = "A small utility for partitioning a sequence of items by enum discriminant"
+repository = "https://github.com/dave-gray101/split_by_discriminant"
+
 
 [dependencies]
