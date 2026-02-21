@@ -22,7 +22,9 @@ Type inference normally deduces the return type; you rarely need to annotate it 
 
 Provides methods:
 
-- `into_parts(self) -> (HashMap<Discriminant<T>, Vec<R>>, Vec<R>)` — consume the struct and obtain the groups and others.
+- `into_parts(self) -> (Map<Discriminant<T>, Vec<R>>, Vec<R>)` — consume the struct and obtain the groups and others.  
+  The concrete map type is `HashMap` by default; enabling the `indexmap`
+  feature switches to `IndexMap`/`IndexSet` instead.
 - `group(&mut self, id: Discriminant<T>) -> Option<&Vec<R>>` — access a particular group by discriminant.
 
 If `R` additionally implements `BorrowMut<T>`, you get a helper:

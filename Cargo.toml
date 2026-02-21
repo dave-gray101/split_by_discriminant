@@ -9,3 +9,8 @@ repository = "https://github.com/dave-gray101/split_by_discriminant"
 
 
 [dependencies]
+indexmap = { version = "1", optional = true }
+
+[features]
+default = []
+indexmap = ["dep:indexmap"]

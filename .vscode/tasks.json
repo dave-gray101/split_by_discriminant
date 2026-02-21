@@ -16,5 +16,35 @@
             },
             "problemMatcher": []
         },
+        {
+            "label": "Run Tests (HashMap)",
+            "type": "shell",
+            "command": "cargo test",
+            "group": {
+                "kind": "test",
+                "isDefault": false
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "showReuseMessage": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Tests (IndexMap)",
+            "type": "shell",
+            "command": "cargo test --features indexmap",
+            "group": {
+                "kind": "test",
+                "isDefault": false
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "showReuseMessage": false
+            },
+            "problemMatcher": []
+        },
     ]
 }

@@ -17,7 +17,22 @@
 //! 
 
 
-use std::collections::{HashMap, HashSet};
+// `indexmap` feature toggles which underlying map/set types we use.  When
+// the feature is enabled we rely on `indexmap::{IndexMap, IndexSet}`; the
+// rest of the code only sees the `Map`/`Set` aliases below.  Keeping the
+// aliases at crate root (and `pub(crate)` so the unit tests can reach them)
+// makes it easy to compile a small sanity check later.
+
+#[cfg(feature = "indexmap")]
+pub(crate) type Map<K, V> = indexmap::IndexMap<K, V>;
+#[cfg(feature = "indexmap")]
+pub(crate) type Set<T> = indexmap::IndexSet<T>;
+
+#[cfg(not(feature = "indexmap"))]
+pub(crate) type Map<K, V> = std::collections::HashMap<K, V>;
+#[cfg(not(feature = "indexmap"))]
+pub(crate) type Set<T> = std::collections::HashSet<T>;
+
 use std::mem::{Discriminant, discriminant};
 use std::borrow::{Borrow, BorrowMut};
 
@@ -64,7 +79,7 @@ pub struct SplitByDiscriminant<T, R>
 where
     R: Borrow<T>,
 {
-    groups: HashMap<Discriminant<T>, Vec<R>>,
+    groups: Map<Discriminant<T>, Vec<R>>,
     others: Vec<R>,
 }
 
@@ -74,7 +89,7 @@ where
     R: Borrow<T>,
 {
     /// Deconstruct into the owned collections.
-    pub fn into_parts(self) -> (HashMap<Discriminant<T>, Vec<R>>, Vec<R>) {
+    pub fn into_parts(self) -> (Map<Discriminant<T>, Vec<R>>, Vec<R>) {
         (self.groups, self.others)
     }
 
@@ -207,12 +222,12 @@ where
     K: IntoIterator,
     K::Item: Borrow<Discriminant<T>>,
 {
-    let wanted: HashSet<Discriminant<T>> = kinds
+    let wanted: Set<Discriminant<T>> = kinds
         .into_iter()
         .map(|k| k.borrow().clone())
         .collect();
 
-    let mut groups: HashMap<Discriminant<T>, Vec<R>> = HashMap::new();
+    let mut groups: Map<Discriminant<T>, Vec<R>> = Map::new();
     let mut others = Vec::new();
 
     for item in items.into_iter() {
