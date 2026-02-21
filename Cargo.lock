@@ -4,4 +4,4 @@ version = 4
 
 [[package]]
 name = "split_by_discriminant"
-version = "0.1.0"
+version = "0.1.1"
