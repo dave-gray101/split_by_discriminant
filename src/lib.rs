@@ -11,6 +11,7 @@
 //! even `T` itself, since `Borrow<T>` is blanket‑implemented for `T`).  It
 //! returns a [`SplitByDiscriminant`] helper that exposes grouped references as
 //! well as any items that were not matched by the provided discriminants.
+//! 
 //! For cases where you want to apply custom transformations while
 //! partitioning, see the companion function [`map_by_discriminant`], which
 //! takes two mapping closures and allows the group and others element types to
@@ -19,13 +20,9 @@
 //! No traits beyond `std::borrow::Borrow` (used to obtain a `&T` for
 //! discriminant computation) are strictly required on the element type.  
 //! 
-
-
-// `indexmap` feature toggles which underlying map/set types we use.  When
-// the feature is enabled we rely on `indexmap::{IndexMap, IndexSet}`; the
-// rest of the code only sees the `Map`/`Set` aliases below.  Keeping the
-// aliases at crate root (and `pub(crate)` so the unit tests can reach them)
-// makes it easy to compile a small sanity check later.
+//! The [`indexmap`](https://docs.rs/indexmap/latest/indexmap/) feature toggles which underlying map/set types we use.
+//! When the feature is enabled we rely on `indexmap::{IndexMap, IndexSet}`
+//! Otherwise, `std::collections::{HashMap, HashSet}` is used.
 
 #[cfg(feature = "indexmap")]
 pub(crate) type Map<K, V> = indexmap::IndexMap<K, V>;
@@ -166,7 +163,7 @@ pub trait Extract<U> {
 /// to take ownership of the elements.  Alternatively, pass `&[T]`, `&mut
 /// Vec<T>`, or any other container that yields references, and the return type
 /// will reflect the borrow kind.  When `R` is an immutable reference, helpers
-/// like [`extract`] are omitted via trait bounds.
+/// like [`SplitByDiscriminant::extract`] are omitted via trait bounds.
 ///
 /// Examples of accepted inputs:
 ///
@@ -313,7 +310,7 @@ where
     /// each discriminant; it may convert them to some other representation.
     /// This is primarily a convenience for callers who want an immediate
     /// post‑processing step without manually iterating the map returned by
-    /// [`into_parts`].
+    /// [`SplitByDiscriminant::into_parts`].
     pub fn map_groups<U, F>(self, mut f: F) -> Map<Discriminant<T>, U>
     where
         F: FnMut(Vec<R>) -> U,
