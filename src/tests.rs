@@ -4,7 +4,7 @@
 use super::*;
 use std::mem::discriminant;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum E {
     A(i32),
     B(String),
@@ -142,4 +142,45 @@ fn extract_nonexistent_discriminant_returns_none() {
     // only split on A; C is absent so extract should return None
     let mut split = split_by_discriminant(&mut data, &[a_disc]);
     assert!(split.extract::<i32>(c_disc).is_none());
+}
+
+#[test]
+fn map_by_discriminant_applies_closures() {
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::C];
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    // convert matched elements to their debug string, others to a literal
+    let mut split: SplitByDiscriminant<_, String, String> =
+        map_by_discriminant(&mut data[..], &[a_disc, b_disc],
+            |r: &mut E| format!("MATCH:{:?}", r),
+            |r: &mut E| format!("OTHER:{:?}", r),
+        );
+
+    assert_eq!(split.group(a_disc).unwrap(), &vec![
+        String::from("MATCH:A(1)"),
+        String::from("MATCH:A(2)"),
+    ]);
+    assert_eq!(split.group(b_disc).unwrap(), &vec![String::from("MATCH:B(\"hi\")")]);
+
+    let others = split.into_parts().1;
+    assert_eq!(others, vec![String::from("OTHER:C")]);
+}
+
+#[test]
+fn map_groups_and_map_others_helpers() {
+    let mut data = [E::A(5), E::B("x".into()), E::A(6)];
+    let a_disc = discriminant(&E::A(0));
+    let mut data_clone = data.clone();
+
+    let split1 = split_by_discriminant(&mut data, &[a_disc]);
+    let split2 = split_by_discriminant(&mut data_clone, &[a_disc]);
+
+    let counts: Map<_, usize> = split1.map_groups(|v| v.len());
+    assert_eq!(counts.get(&a_disc).cloned(), Some(2));
+
+    let other_debug: Vec<String> = split2.map_others(|v| {
+        v.into_iter().map(|r| format!("{:?}", r)).collect()
+    });
+    assert_eq!(other_debug, vec![String::from("B(\"x\")")]);
 }

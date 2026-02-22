@@ -11,6 +11,10 @@
 //! even `T` itself, since `Borrow<T>` is blanket‑implemented for `T`).  It
 //! returns a [`SplitByDiscriminant`] helper that exposes grouped references as
 //! well as any items that were not matched by the provided discriminants.
+//! For cases where you want to apply custom transformations while
+//! partitioning, see the companion function [`map_by_discriminant`], which
+//! takes two mapping closures and allows the group and others element types to
+//! differ.
 //!
 //! No traits beyond `std::borrow::Borrow` (used to obtain a `&T` for
 //! discriminant computation) are strictly required on the element type.  
@@ -33,7 +37,7 @@ pub(crate) type Map<K, V> = std::collections::HashMap<K, V>;
 #[cfg(not(feature = "indexmap"))]
 pub(crate) type Set<T> = std::collections::HashSet<T>;
 
-use std::mem::{Discriminant, discriminant};
+use std::mem::Discriminant;
 use std::borrow::{Borrow, BorrowMut};
 
 /// Outcome of a discriminant‑based partition operation.
@@ -75,37 +79,39 @@ use std::borrow::{Borrow, BorrowMut};
 ///     split_by_discriminant(&data[..], &[A_DISC, B_DISC]);
 /// assert_eq!(split2.group(A_DISC).unwrap().len(), 2);
 /// ```
-pub struct SplitByDiscriminant<T, R>
-where
-    R: Borrow<T>,
-{
-    groups: Map<Discriminant<T>, Vec<R>>,
-    others: Vec<R>,
+/// Result of a discriminant split.
+///
+/// `G` is the element type stored in each group, and `O` is the element
+/// type used for the "others" bucket.  When both are the same – the common
+/// case for [`split_by_discriminant`] – the third type parameter can be
+/// omitted thanks to the default.
+pub struct SplitByDiscriminant<T, G, O = G> {
+    groups: Map<Discriminant<T>, Vec<G>>,
+    others: Vec<O>,
 }
 
 
-impl<T, R> SplitByDiscriminant<T, R>
-where
-    R: Borrow<T>,
-{
+impl<T, G, O> SplitByDiscriminant<T, G, O> {
     /// Deconstruct into the owned collections.
-    pub fn into_parts(self) -> (Map<Discriminant<T>, Vec<R>>, Vec<R>) {
+    pub fn into_parts(self) -> (Map<Discriminant<T>, Vec<G>>, Vec<O>) {
         (self.groups, self.others)
     }
 
     /// Access the stored group for a discriminant.
-    pub fn group(&mut self, id: Discriminant<T>) -> Option<&Vec<R>> {
+    pub fn group(&mut self, id: Discriminant<T>) -> Option<&Vec<G>> {
         self.groups.get(&id)
     }
 }
 
 // implement extract only when we actually have mutable access to the inner T
-impl<T, R> SplitByDiscriminant<T, R>
+// implement extract only when the group element type supports mutable
+// borrowing of `T`.  the "others" type is irrelevant here.
+impl<T, G, O> SplitByDiscriminant<T, G, O>
 where
-    R: BorrowMut<T>,
+    G: BorrowMut<T>,
 {
     /// See the earlier documentation; this method is only available when the
-    /// reference type supports mutable borrowing.
+    /// group element type supports mutable borrowing.
     pub fn extract<U>(&mut self, id: Discriminant<T>) -> Option<Vec<&mut U>>
     where
         T: Extract<U>,
@@ -216,6 +222,73 @@ pub trait Extract<U> {
 /// mutable container yields `SplitByDiscriminant<T, &mut T>`, an immutable
 /// borrow gives `SplitByDiscriminant<T, &T>`, and an owning iterator results in
 /// `SplitByDiscriminant<T, T>`.
+/// 
+/// # Example (custom mapping)
+///
+/// ```rust
+/// use split_by_discriminant::map_by_discriminant;
+/// use std::mem::discriminant;
+///
+/// #[derive(Debug)]
+/// enum E { A(i32), B };
+/// let a_disc = discriminant(&E::A(0));
+/// let b_disc = discriminant(&E::B);
+///
+/// let data = [E::A(1), E::B];
+/// let mut split = map_by_discriminant(&data[..], &[a_disc, b_disc],
+///     |e| format!("match:{:?}", e),
+///     |e| format!("other:{:?}", e),
+/// );
+/// assert_eq!(split.group(a_disc).unwrap()[0], "match:A(1)");
+/// ```
+///
+/// The two closures control what happens to matched vs unmatched items
+/// allowing the caller to transform values.
+///
+/// `map_by_discriminant` returns a `SplitByDiscriminant` where the
+/// group and other element types may differ; this is what motivated the
+/// additional type parameter on the struct itself.  The implementation is
+/// identical to the old `split_internal` helper but inlined here so there is
+/// only a single public function.
+pub fn map_by_discriminant<T, I, K, R, U, V, M, N>(
+    items: I,
+    kinds: K,
+    mut map_match: M,
+    mut map_other: N,
+) -> SplitByDiscriminant<T, U, V>
+where
+    I: IntoIterator<Item = R>,
+    R: Borrow<T>,
+    K: IntoIterator,
+    K::Item: Borrow<Discriminant<T>>,
+    M: FnMut(R) -> U,
+    N: FnMut(R) -> V,
+{
+    let wanted: Set<Discriminant<T>> = kinds
+        .into_iter()
+        .map(|k| k.borrow().clone())
+        .collect();
+
+    let mut groups: Map<Discriminant<T>, Vec<U>> = Map::new();
+    let mut others: Vec<V> = Vec::new();
+
+    for item in items.into_iter() {
+        let d = std::mem::discriminant(item.borrow());
+        if wanted.contains(&d) {
+            groups.entry(d).or_default().push(map_match(item));
+        } else {
+            others.push(map_other(item));
+        }
+    }
+
+    SplitByDiscriminant { groups, others }
+}
+
+/// Partition a sequence of elements into groups keyed by enum discriminant.
+///
+/// This is the simplest function in the library; it simply returns
+/// `SplitByDiscriminant<T, R>` where the two element types coincide.
+/// The bound `R: Borrow<T>` is required for the discriminant computation.
 pub fn split_by_discriminant<T, I, K, R>(
     items: I,
     kinds: K,
@@ -226,24 +299,38 @@ where
     K: IntoIterator,
     K::Item: Borrow<Discriminant<T>>,
 {
-    let wanted: Set<Discriminant<T>> = kinds
-        .into_iter()
-        .map(|k| k.borrow().clone())
-        .collect();
+    map_by_discriminant(items, kinds, |r| r, |r| r)
+}
 
-    let mut groups: Map<Discriminant<T>, Vec<R>> = Map::new();
-    let mut others = Vec::new();
 
-    for item in items.into_iter() {
-        let d = discriminant(item.borrow());
-        if wanted.contains(&d) {
-            groups.entry(d).or_default().push(item);
-        } else {
-            others.push(item);
-        }
+impl<T, R> SplitByDiscriminant<T, R>
+where
+    R: Borrow<T>,
+{
+    /// Transform each group all at once, consuming `self`.
+    ///
+    /// The provided function is given ownership of the entire `Vec<R>` for
+    /// each discriminant; it may convert them to some other representation.
+    /// This is primarily a convenience for callers who want an immediate
+    /// post‑processing step without manually iterating the map returned by
+    /// [`into_parts`].
+    pub fn map_groups<U, F>(self, mut f: F) -> Map<Discriminant<T>, U>
+    where
+        F: FnMut(Vec<R>) -> U,
+    {
+        self.groups
+            .into_iter()
+            .map(|(k, v)| (k, f(v)))
+            .collect()
     }
 
-    SplitByDiscriminant { groups, others }
+    /// Apply a transformation to the "others" vector.
+    pub fn map_others<U, F>(self, f: F) -> U
+    where
+        F: FnOnce(Vec<R>) -> U,
+    {
+        f(self.others)
+    }
 }
 
 

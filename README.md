@@ -1,6 +1,16 @@
 # split_by_discriminant
 
-`split_by_discriminant` is a lightweight Rust utility for partitioning a sequence of items by the discriminant of an `enum`. It is especially useful when you need to gather all values of a particular variant, operate on them, and then return them to the original collection.
+`split_by_discriminant` is a lightweight Rust utility for partitioning a sequence of items by the discriminant of an `enum`.
+
+It provides two closely‑related helpers:
+
+* `split_by_discriminant` – the simple grouping operation.
+* `map_by_discriminant` – a more flexible variant that applies separate
+  mapping closures to matched and unmatched items, allowing you to change the
+  output types on the fly.
+
+Both are helpful when you need to gather all values of a particular variant,
+operate on them, and then return them to the original collection.
 
 ## Primary API
 
@@ -17,6 +27,37 @@ Returns a [`SplitByDiscriminant<T, R>`] containing:
 - `others`: a `Vec<R>` of items whose discriminant was not requested.
 
 Type inference normally deduces the return type; you rarely need to annotate it explicitly.
+
+### `map_by_discriminant`
+
+A more flexible variant of `split_by_discriminant` that accepts two mapping closures.
+The first closure is applied to items whose discriminant is requested, and the second
+closure handles all others.  This allows the types of grouped elements and the
+"others" bucket to differ, and lets you perform on-the-fly transformations during
+partitioning.  The semantics and borrow rules are otherwise identical to
+`split_by_discriminant`.
+
+The signature is:
+
+```rust
+pub fn map_by_discriminant<T, I, K, R, U, V, M, N>(
+    items: I,
+    kinds: K,
+    map_match: M,
+    map_other: N,
+) -> SplitByDiscriminant<T, U, V>
+where
+    I: IntoIterator<Item = R>,
+    R: Borrow<T>,
+    K: IntoIterator,
+    K::Item: Borrow<Discriminant<T>>,
+    M: FnMut(R) -> U,
+    N: FnMut(R) -> V,
+```
+
+The README examples below demonstrate the simplest usage with `split_by_discriminant`;
+see the crate docs for a `map_by_discriminant` example, and the section
+immediately following the examples shows a basic `map_by_discriminant` use case.
 
 ### `SplitByDiscriminant` struct
 
@@ -89,7 +130,31 @@ let data = [E::A(2), E::B];
 let mut split2 = split_by_discriminant(&data, &[a_disc]);
 assert_eq!(split2.group(a_disc).unwrap().len(), 1);
 ```
+---
 
+You can also call [`map_by_discriminant`] when you need to transform the
+matched and unmatched items during partitioning.  The following example
+converts each element to a `String` with a different prefix depending on
+whether it was requested.
+
+```rust
+use split_by_discriminant::map_by_discriminant;
+use std::mem::discriminant;
+
+#[derive(Debug)]
+enum E { A(i32), B }
+
+let data = [E::A(1), E::B];
+let a_disc = discriminant(&E::A(0));
+let b_disc = discriminant(&E::B);
+
+let split = map_by_discriminant(&data[..], &[a_disc, b_disc],
+    |e| format!("match:{:?}", e),
+    |e| format!("other:{:?}", e),
+);
+
+assert_eq!(split.group(a_disc).unwrap(), &vec!["match:A(1)".to_string()]);
+```
 ## Supported Inputs
 
 - `&mut [T]` or `&mut Vec<T>` ⇒ `SplitByDiscriminant<T, &mut T>`
