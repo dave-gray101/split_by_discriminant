@@ -238,8 +238,8 @@ pub trait ExtractFrom<T, U> {
 ///
 /// # Example
 ///
-/// The code below is entirely self-contained and runnable.  Comments mark
-/// what would be a separate crate in a real project.
+/// The code below is entirely self-contained to a single module due to doctest limitations.
+/// Comments mark what would be a separate crate in a real project.
 ///
 /// ```rust
 /// // ── external_enums ──────────────────────────────────────────────────────
