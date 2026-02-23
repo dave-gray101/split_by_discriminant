@@ -21,7 +21,7 @@
 //! discriminant computation) are strictly required on the element type.  
 //!
 //! To extract inner values without closures at the call site, wrap the split
-//! in a [`BoundSplit`] and implement [`ExtractFrom`] on a local extractor
+//! in a [`SplitWithExtractor`] and implement [`ExtractFrom`] on a local extractor
 //! type.  This pattern remains orphan-rule–safe even when the enum comes from
 //! an external crate that you cannot modify.
 //! 
@@ -172,7 +172,7 @@ where
     /// ```
     ///
     /// For a higher-level API that binds the extractor up front and avoids
-    /// repeating a closure on every call, see [`BoundSplit`].
+    /// repeating a closure on every call, see [`SplitWithExtractor`].
     pub fn extract_with<U, F>(&mut self, id: Discriminant<T>, mut f: F) -> Option<Vec<&mut U>>
     where
         F: for<'a> FnMut(&'a mut T) -> Option<&'a mut U>,
@@ -217,8 +217,8 @@ where
 /// }
 /// ```
 ///
-/// Pass `MyEnumExtractor` to [`BoundSplit::new`] and call
-/// [`BoundSplit::extract`] with no closure at the call site.
+/// Pass `MyEnumExtractor` to [`SplitWithExtractor::new`] and call
+/// [`SplitWithExtractor::extract`] with no closure at the call site.
 pub trait ExtractFrom<T, U> {
     fn extract_from<'a>(&self, t: &'a mut T) -> Option<&'a mut U>;
 }
@@ -226,15 +226,15 @@ pub trait ExtractFrom<T, U> {
 /// A [`SplitByDiscriminant`] with an extractor bound up front.
 ///
 /// Wraps a [`SplitByDiscriminant`] together with an extractor value `E`.
-/// The [`extract`](BoundSplit::extract) method resolves the extraction logic
+/// The [`extract`](SplitWithExtractor::extract) method resolves the extraction logic
 /// via `E: ExtractFrom<T, U>`, so no closure is needed at the call site.
 ///
-/// Construct with [`BoundSplit::new`] after calling [`split_by_discriminant`].
-/// Non-consuming methods ([`group`](BoundSplit::group),
-/// [`extract_with`](BoundSplit::extract_with),
-/// [`extract`](BoundSplit::extract)) are available directly on `BoundSplit`.
+/// Construct with [`SplitWithExtractor::new`] after calling [`split_by_discriminant`].
+/// Non-consuming methods ([`group`](SplitWithExtractor::group),
+/// [`extract_with`](SplitWithExtractor::extract_with),
+/// [`extract`](SplitWithExtractor::extract)) are available directly on `SplitWithExtractor`.
 /// To reach consuming methods (`into_parts`, `map_groups`, `map_others`),
-/// call [`into_inner`](BoundSplit::into_inner) first.
+/// call [`into_inner`](SplitWithExtractor::into_inner) first.
 ///
 /// # Example
 ///
@@ -264,8 +264,8 @@ pub trait ExtractFrom<T, U> {
 /// }
 ///
 /// // ── user_downstream ─────────────────────────────────────────────────────
-/// // Calls BoundSplit::extract with no closure needed at the call site.
-/// use split_by_discriminant::{split_by_discriminant, BoundSplit};
+/// // Calls SplitWithExtractor::extract with no closure needed at the call site.
+/// use split_by_discriminant::{split_by_discriminant, SplitWithExtractor};
 /// use std::mem::discriminant;
 ///
 /// let mut data = vec![MyEnum::A(1), MyEnum::B("hi".into()), MyEnum::A(2)];
@@ -273,25 +273,25 @@ pub trait ExtractFrom<T, U> {
 /// let b_disc = discriminant(&MyEnum::B(String::new()));
 ///
 /// let split = split_by_discriminant(&mut data, &[a_disc, b_disc]);
-/// let mut bound = BoundSplit::new(split, MyEnumExtractor);
+/// let mut extractor = SplitWithExtractor::new(split, MyEnumExtractor);
 ///
 /// // Each extract call lives in its own scope so the &mut borrows don't overlap.
-/// { let v: Vec<&mut i32>    = bound.extract(a_disc).unwrap(); assert_eq!(v.len(), 2); }
-/// { let v: Vec<&mut String> = bound.extract(b_disc).unwrap(); assert_eq!(v.len(), 1); }
+/// { let v: Vec<&mut i32>    = extractor.extract(a_disc).unwrap(); assert_eq!(v.len(), 2); }
+/// { let v: Vec<&mut String> = extractor.extract(b_disc).unwrap(); assert_eq!(v.len(), 1); }
 ///
 /// // Consuming helpers reached via into_inner().
-/// let (_groups, others) = bound.into_inner().into_parts();
+/// let (_groups, others) = extractor.into_inner().into_parts();
 /// assert_eq!(others.len(), 0);
 /// ```
-pub struct BoundSplit<T, G, O, E> {
+pub struct SplitWithExtractor<T, G, O, E> {
     inner: SplitByDiscriminant<T, G, O>,
     extractor: E,
 }
 
-impl<T, G, O, E> BoundSplit<T, G, O, E> {
+impl<T, G, O, E> SplitWithExtractor<T, G, O, E> {
     /// Wrap a split and an extractor together.
     pub fn new(split: SplitByDiscriminant<T, G, O>, extractor: E) -> Self {
-        BoundSplit { inner: split, extractor }
+        SplitWithExtractor { inner: split, extractor }
     }
 
     /// Unwrap back to the underlying [`SplitByDiscriminant`].
@@ -308,7 +308,7 @@ impl<T, G, O, E> BoundSplit<T, G, O, E> {
     }
 }
 
-impl<T, G, O, E> BoundSplit<T, G, O, E>
+impl<T, G, O, E> SplitWithExtractor<T, G, O, E>
 where
     G: BorrowMut<T>,
 {
@@ -362,7 +362,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use split_by_discriminant::{split_by_discriminant, BoundSplit, ExtractFrom};
+/// use split_by_discriminant::{split_by_discriminant, SplitWithExtractor, ExtractFrom};
 /// use std::mem::discriminant;
 ///
 /// #[derive(Debug)]
@@ -380,11 +380,11 @@ where
 /// let a_disc = discriminant(&E::A(0));
 /// let b_disc = discriminant(&E::B(String::new()));
 ///
-/// // mutable slice — use BoundSplit for ergonomic extraction
+/// // mutable slice — use SplitWithExtractor for ergonomic extraction
 /// let split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
-/// let mut bound = BoundSplit::new(split, EExtract);
-/// assert_eq!(bound.group(a_disc).unwrap().len(), 2);
-/// let ints: Vec<&mut i32> = bound.extract(a_disc).unwrap();
+/// let mut extractor = SplitWithExtractor::new(split, EExtract);
+/// assert_eq!(extractor.group(a_disc).unwrap().len(), 2);
+/// let ints: Vec<&mut i32> = extractor.extract(a_disc).unwrap();
 /// assert_eq!(ints.len(), 2);
 ///
 /// // or a mutable Vec

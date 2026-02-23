@@ -63,13 +63,13 @@ Implement this on a **local extractor type** to describe how to borrow a `&mut U
 from a `&mut T`.  Because the impl is on *your* type (not on `T`), the orphan rule
 is satisfied even when `T` and `U` both come from external crates.
 
-### `BoundSplit<T, G, O, E>` struct
+### `SplitWithExtractor<T, G, O, E>` struct
 
-Wraps a `SplitByDiscriminant` with a bound extractor `E`.  Provides an
+Wraps a `SplitByDiscriminant` by binding it to an extractor `E`.  Provides an
 ergonomic `extract(disc)` that requires no closure at the call site —
 `U` is resolved via `E: ExtractFrom<T, U>`.
 
-Methods available directly on `BoundSplit`:
+Methods available directly on `SplitWithExtractor`:
 
 - `group` — forwarded from the inner split.
 - `extract_with` — forwarded from the inner split.
@@ -77,19 +77,19 @@ Methods available directly on `BoundSplit`:
 - `into_inner(self) -> SplitByDiscriminant<T, G, O>` — unwrap to reach
   consuming methods (`into_parts`, `map_groups`, `map_others`).
 
-Construct with `BoundSplit::new(split, extractor)`.
+Construct with `SplitWithExtractor::new(split, extractor)`.
 
 ## Four-crate pattern (foreign enums)
 
 The orphan rule prevents implementing a trait from crate A on a type from crate B
-inside a third crate C.  `BoundSplit` + `ExtractFrom` sidestep this completely:
+inside a third crate C.  `SplitWithExtractor` + `ExtractFrom` sidestep this completely:
 
 | Crate | Role |
 |---|---|
 | `external_enums` | Defines `MyEnum`. Cannot be changed. |
 | `split_by_discriminant` | This crate. |
 | `user_helper` | Defines a **local** `MyEnumExtractor` and implements `ExtractFrom<MyEnum, _>` on it. Written once, reused everywhere. |
-| `user_downstream` | Calls `BoundSplit::extract` — no trait impl needed. |
+| `user_downstream` | Calls `SplitWithExtractor::extract` — no trait impl needed. |
 
 ```rust
 // user_helper
@@ -105,12 +105,12 @@ impl ExtractFrom<MyEnum, i32> for MyEnumExtractor {
 }
 
 // user_downstream
-use split_by_discriminant::{split_by_discriminant, BoundSplit};
+use split_by_discriminant::{split_by_discriminant, SplitWithExtractor};
 use user_helper::MyEnumExtractor;
 
 let split = split_by_discriminant(&mut data, &[a_disc]);
-let mut bound = BoundSplit::new(split, MyEnumExtractor);
-let ints: Vec<&mut i32> = bound.extract(a_disc).unwrap();
+let mut extractor = SplitWithExtractor::new(split, MyEnumExtractor);
+let ints: Vec<&mut i32> = extractor.extract(a_disc).unwrap();
 ```
 
 For a one-off extraction without setting up an extractor type, pass a closure
@@ -125,7 +125,7 @@ let ints: Vec<&mut i32> = split
 ## Examples
 
 ```rust
-use split_by_discriminant::{split_by_discriminant, BoundSplit, ExtractFrom};
+use split_by_discriminant::{split_by_discriminant, SplitWithExtractor, ExtractFrom};
 use std::mem::discriminant;
 
 #[derive(Debug)]
@@ -143,17 +143,17 @@ let a_disc = discriminant(&E::A(0));
 let b_disc = discriminant(&E::B(String::new()));
 
 let split = split_by_discriminant(&mut data, &[a_disc, b_disc]);
-let mut bound = BoundSplit::new(split, EExtractor);
+let mut extractor = SplitWithExtractor::new(split, EExtractor);
 
 // Ergonomic extraction — no closure at the call site.
 // Each call lives in its own scope so &mut borrows do not overlap.
 {
-    let ints: Vec<&mut i32> = bound.extract(a_disc).unwrap();
+    let ints: Vec<&mut i32> = extractor.extract(a_disc).unwrap();
     assert_eq!(ints.len(), 2);
 }
 
 // Consuming methods are reached via into_inner().
-let (groups, others) = bound.into_inner().into_parts();
+let (groups, others) = extractor.into_inner().into_parts();
 assert_eq!(others.len(), 1); // E::C
 ```
 
@@ -224,7 +224,7 @@ assert_eq!(split.group(a_disc).unwrap(), &vec!["match:A(1)".to_string()]);
 
 - Discriminants can be precomputed with `std::mem::discriminant` and stored in `const`s for reuse.
 - Items not matching any requested discriminant are preserved in `others` in original order.
-- `extract_with` and `BoundSplit::extract` are only available when the group element
+- `extract_with` and `SplitWithExtractor::extract` are only available when the group element
   type implements `BorrowMut<T>` (i.e. `&mut T` or `T` itself).
 
 ## Testing
