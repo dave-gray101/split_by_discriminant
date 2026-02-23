@@ -19,6 +19,11 @@
 //!
 //! No traits beyond `std::borrow::Borrow` (used to obtain a `&T` for
 //! discriminant computation) are strictly required on the element type.  
+//!
+//! To extract inner values without closures at the call site, wrap the split
+//! in a [`BoundSplit`] and implement [`ExtractFrom`] on a local extractor
+//! type.  This pattern remains orphan-rule–safe even when the enum comes from
+//! an external crate that you cannot modify.
 //! 
 //! The [`indexmap`](https://docs.rs/indexmap/latest/indexmap/) feature toggles which underlying map/set types we use.
 //! When the feature is enabled we rely on `indexmap::{IndexMap, IndexSet}`
@@ -107,16 +112,75 @@ impl<T, G, O> SplitByDiscriminant<T, G, O>
 where
     G: BorrowMut<T>,
 {
-    /// See the earlier documentation; this method is only available when the
-    /// group element type supports mutable borrowing.
-    pub fn extract<U>(&mut self, id: Discriminant<T>) -> Option<Vec<&mut U>>
+    /// Closure-based extraction that sidesteps the orphan rule.
+    ///
+    /// The caller supplies `f`, which maps `&mut T → Option<&mut U>`, so **no
+    /// trait implementation is required**.  This is the recommended entry point
+    /// when `T` or `U` come from external crates that you do not own.
+    ///
+    /// The closure must be valid for any lifetime `'a` (expressed as a
+    /// higher-ranked trait bound), because Rust ties the output lifetime to
+    /// the input borrow: `for<'a> FnMut(&'a mut T) -> Option<&'a mut U>`.
+    /// In practice you never write this bound explicitly—closures that do
+    /// straightforward pattern-matching satisfy it automatically.
+    ///
+    /// Returns `None` when `id` was not among the discriminants passed to
+    /// [`split_by_discriminant`]; items for which `f` returns `None` are
+    /// silently skipped.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use split_by_discriminant::split_by_discriminant;
+    /// use std::mem::discriminant;
+    ///
+    /// #[derive(Debug)]
+    /// enum E { A(i32), B }
+    ///
+    /// let mut data = [E::A(1), E::A(2), E::B];
+    /// let a_disc = discriminant(&E::A(0));
+    ///
+    /// let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+    /// let ints: Vec<&mut i32> = split
+    ///     .extract_with(a_disc, |e| if let E::A(v) = e { Some(v) } else { None })
+    ///     .unwrap();
+    /// assert_eq!(ints.len(), 2);
+    /// ```
+    ///
+    /// # Crate-boundary pattern
+    ///
+    /// When `T` is foreign, define a plain helper function in an intermediary
+    /// crate (`user_helper`) and pass it by name — no trait impl needed:
+    ///
+    /// ```rust
+    /// use split_by_discriminant::split_by_discriminant;
+    /// use std::mem::discriminant;
+    ///
+    /// // Imagine this lives in `user_helper`, depending on `external_enums`.
+    /// // The function is local to *some* crate, so the orphan rule never fires.
+    /// #[derive(Debug)] enum MyEnum { A(i32), B }
+    /// fn extract_a(e: &mut MyEnum) -> Option<&mut i32> {
+    ///     if let MyEnum::A(v) = e { Some(v) } else { None }
+    /// }
+    ///
+    /// // user_downstream: pass the helper function directly — no closure syntax needed
+    /// let mut data = [MyEnum::A(1), MyEnum::A(2), MyEnum::B];
+    /// let a_disc = discriminant(&MyEnum::A(0));
+    /// let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+    /// let ints: Vec<&mut i32> = split.extract_with(a_disc, extract_a).unwrap();
+    /// assert_eq!(ints.len(), 2);
+    /// ```
+    ///
+    /// For a higher-level API that binds the extractor up front and avoids
+    /// repeating a closure on every call, see [`BoundSplit`].
+    pub fn extract_with<U, F>(&mut self, id: Discriminant<T>, mut f: F) -> Option<Vec<&mut U>>
     where
-        T: Extract<U>,
+        F: for<'a> FnMut(&'a mut T) -> Option<&'a mut U>,
     {
         if let Some(vec) = self.groups.get_mut(&id) {
             let mut out = Vec::with_capacity(vec.len());
             for item in vec.iter_mut() {
-                if let Some(u) = item.borrow_mut().extract() {
+                if let Some(u) = f(item.borrow_mut()) {
                     out.push(u);
                 }
             }
@@ -127,31 +191,149 @@ where
     }
 }
 
-/// A helper trait used by [`SplitByDiscriminant::extract`].
+/// Defines how to obtain a `&mut U` from a `&mut T`.
 ///
-/// `Extract<U>` defines how to obtain a `&mut U` from a `&mut T`.  When `T`
-/// is an enum, the implementation typically checks for a particular variant
-/// and returns a reference to the contained value.  Returns `None` if the
-/// conversion is not possible.
+/// Unlike implementing a trait directly on `T`, the impl here lives on a
+/// *local extractor type* that you define in your own crate.  This means the
+/// orphan rule is never an issue, even when both `T` and `U` come from
+/// external crates.
+///
+/// # Example — foreign enum
+///
+/// ```rust
+/// use split_by_discriminant::ExtractFrom;
+///
+/// // In a real project this enum would live in an external crate.
+/// // The key point: the impl below is on *MyEnumExtractor*, which is local,
+/// // so the orphan rule is never triggered regardless of where MyEnum lives.
+/// #[derive(Debug)] enum MyEnum { A(i32), B }
+///
+/// pub struct MyEnumExtractor;
+///
+/// impl ExtractFrom<MyEnum, i32> for MyEnumExtractor {
+///     fn extract_from<'a>(&self, t: &'a mut MyEnum) -> Option<&'a mut i32> {
+///         if let MyEnum::A(v) = t { Some(v) } else { None }
+///     }
+/// }
+/// ```
+///
+/// Pass `MyEnumExtractor` to [`BoundSplit::new`] and call
+/// [`BoundSplit::extract`] with no closure at the call site.
+pub trait ExtractFrom<T, U> {
+    fn extract_from<'a>(&self, t: &'a mut T) -> Option<&'a mut U>;
+}
+
+/// A [`SplitByDiscriminant`] with an extractor bound up front.
+///
+/// Wraps a [`SplitByDiscriminant`] together with an extractor value `E`.
+/// The [`extract`](BoundSplit::extract) method resolves the extraction logic
+/// via `E: ExtractFrom<T, U>`, so no closure is needed at the call site.
+///
+/// Construct with [`BoundSplit::new`] after calling [`split_by_discriminant`].
+/// Non-consuming methods ([`group`](BoundSplit::group),
+/// [`extract_with`](BoundSplit::extract_with),
+/// [`extract`](BoundSplit::extract)) are available directly on `BoundSplit`.
+/// To reach consuming methods (`into_parts`, `map_groups`, `map_others`),
+/// call [`into_inner`](BoundSplit::into_inner) first.
 ///
 /// # Example
 ///
+/// The code below is entirely self-contained and runnable.  Comments mark
+/// what would be a separate crate in a real project.
+///
 /// ```rust
-/// use split_by_discriminant::Extract;
+/// // ── external_enums ──────────────────────────────────────────────────────
+/// // Foreign crate: we cannot change it or derive anything on it.
+/// #[derive(Debug)] pub enum MyEnum { A(i32), B(String) }
 ///
-/// enum E { A(i32), B(String) }
-///
-/// impl Extract<i32> for E {
-///     fn extract(&mut self) -> Option<&mut i32> {
-///         if let E::A(v) = self { Some(v) } else { None }
+/// // ── user_helper ─────────────────────────────────────────────────────────
+/// // Glue crate: depends on split_by_discriminant + external_enums.
+/// // MyEnumExtractor is LOCAL to this crate, so every ExtractFrom impl is
+/// // orphan-rule–safe regardless of where MyEnum was defined.
+/// use split_by_discriminant::ExtractFrom;
+/// struct MyEnumExtractor;
+/// impl ExtractFrom<MyEnum, i32> for MyEnumExtractor {
+///     fn extract_from<'a>(&self, t: &'a mut MyEnum) -> Option<&'a mut i32> {
+///         if let MyEnum::A(v) = t { Some(v) } else { None }
+///     }
+/// }
+/// impl ExtractFrom<MyEnum, String> for MyEnumExtractor {
+///     fn extract_from<'a>(&self, t: &'a mut MyEnum) -> Option<&'a mut String> {
+///         if let MyEnum::B(s) = t { Some(s) } else { None }
 ///     }
 /// }
 ///
-/// // now you can call `split.extract(a_disc)` where `a_disc` is the
-/// // discriminant for `E::A`.
+/// // ── user_downstream ─────────────────────────────────────────────────────
+/// // Calls BoundSplit::extract with no closure needed at the call site.
+/// use split_by_discriminant::{split_by_discriminant, BoundSplit};
+/// use std::mem::discriminant;
+///
+/// let mut data = vec![MyEnum::A(1), MyEnum::B("hi".into()), MyEnum::A(2)];
+/// let a_disc = discriminant(&MyEnum::A(0));
+/// let b_disc = discriminant(&MyEnum::B(String::new()));
+///
+/// let split = split_by_discriminant(&mut data, &[a_disc, b_disc]);
+/// let mut bound = BoundSplit::new(split, MyEnumExtractor);
+///
+/// // Each extract call lives in its own scope so the &mut borrows don't overlap.
+/// { let v: Vec<&mut i32>    = bound.extract(a_disc).unwrap(); assert_eq!(v.len(), 2); }
+/// { let v: Vec<&mut String> = bound.extract(b_disc).unwrap(); assert_eq!(v.len(), 1); }
+///
+/// // Consuming helpers reached via into_inner().
+/// let (_groups, others) = bound.into_inner().into_parts();
+/// assert_eq!(others.len(), 0);
 /// ```
-pub trait Extract<U> {
-    fn extract(&mut self) -> Option<&mut U>;
+pub struct BoundSplit<T, G, O, E> {
+    inner: SplitByDiscriminant<T, G, O>,
+    extractor: E,
+}
+
+impl<T, G, O, E> BoundSplit<T, G, O, E> {
+    /// Wrap a split and an extractor together.
+    pub fn new(split: SplitByDiscriminant<T, G, O>, extractor: E) -> Self {
+        BoundSplit { inner: split, extractor }
+    }
+
+    /// Unwrap back to the underlying [`SplitByDiscriminant`].
+    ///
+    /// Use this to reach consuming methods (`into_parts`, `map_groups`,
+    /// `map_others`) on the inner split.
+    pub fn into_inner(self) -> SplitByDiscriminant<T, G, O> {
+        self.inner
+    }
+
+    /// Access the stored group for a discriminant.
+    pub fn group(&mut self, id: Discriminant<T>) -> Option<&Vec<G>> {
+        self.inner.group(id)
+    }
+}
+
+impl<T, G, O, E> BoundSplit<T, G, O, E>
+where
+    G: BorrowMut<T>,
+{
+    /// Closure-based extraction, forwarded to the inner split.
+    ///
+    /// See [`SplitByDiscriminant::extract_with`] for full documentation.
+    pub fn extract_with<U, F>(&mut self, id: Discriminant<T>, f: F) -> Option<Vec<&mut U>>
+    where
+        F: for<'a> FnMut(&'a mut T) -> Option<&'a mut U>,
+    {
+        self.inner.extract_with(id, f)
+    }
+
+    /// Extract inner values using the bound extractor — no closure needed.
+    ///
+    /// `U` is inferred from the `E: ExtractFrom<T, U>` bound and the
+    /// call-site type annotation.  Returns `None` if `id` was not among the
+    /// discriminants passed to [`split_by_discriminant`].
+    pub fn extract<U>(&mut self, id: Discriminant<T>) -> Option<Vec<&mut U>>
+    where
+        E: ExtractFrom<T, U>,
+    {
+        let extractor = &self.extractor;
+        self.inner.extract_with(id, |t| extractor.extract_from(t))
+    }
 }
 
 /// Partition a sequence of elements into groups keyed by enum discriminant.
@@ -163,7 +345,7 @@ pub trait Extract<U> {
 /// to take ownership of the elements.  Alternatively, pass `&[T]`, `&mut
 /// Vec<T>`, or any other container that yields references, and the return type
 /// will reflect the borrow kind.  When `R` is an immutable reference, helpers
-/// like [`SplitByDiscriminant::extract`] are omitted via trait bounds.
+/// like [`SplitByDiscriminant::extract_with`] are omitted via trait bounds.
 ///
 /// Examples of accepted inputs:
 ///
@@ -180,36 +362,37 @@ pub trait Extract<U> {
 /// # Examples
 ///
 /// ```rust
-/// use split_by_discriminant::{split_by_discriminant, Extract};
+/// use split_by_discriminant::{split_by_discriminant, BoundSplit, ExtractFrom};
 /// use std::mem::discriminant;
 ///
 /// #[derive(Debug)]
 /// enum E { A(i32), B(String), C }
 ///
-/// impl Extract<i32> for E {
-///     fn extract(&mut self) -> Option<&mut i32> {
-///         if let E::A(v) = self { Some(v) } else { None }
+/// // local extractor — no orphan rule issues
+/// struct EExtract;
+/// impl ExtractFrom<E, i32> for EExtract {
+///     fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut i32> {
+///         if let E::A(v) = t { Some(v) } else { None }
 ///     }
 /// }
 ///
 /// let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::C];
 /// let a_disc = discriminant(&E::A(0));
 /// let b_disc = discriminant(&E::B(String::new()));
-/// // you can pre‑compute and stash these in `const`s for later use
-/// // const A_DISC: std::mem::Discriminant<E> = discriminant(&E::A(0));
-/// // const B_DISC: std::mem::Discriminant<E> = discriminant(&E::B(String::new()));
 ///
-/// // can pass a mutable slice
-/// let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
-/// assert_eq!(split.group(a_disc).unwrap().len(), 2);
+/// // mutable slice — use BoundSplit for ergonomic extraction
+/// let split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+/// let mut bound = BoundSplit::new(split, EExtract);
+/// assert_eq!(bound.group(a_disc).unwrap().len(), 2);
+/// let ints: Vec<&mut i32> = bound.extract(a_disc).unwrap();
+/// assert_eq!(ints.len(), 2);
 ///
 /// // or a mutable Vec
 /// let mut vec = vec![E::A(3), E::C];
 /// let mut split2 = split_by_discriminant(&mut vec, &[a_disc]);
 /// assert_eq!(split2.group(a_disc).unwrap().len(), 1);
 ///
-/// // you can even consume an owned collection; here `R` is `E` itself
-/// // (Borrow<E> is implemented for E), so the iterator yields `E` values.
+/// // owning iterator
 /// let owned = vec![E::A(4), E::B(String::new())];
 /// let mut split3 = split_by_discriminant(owned.into_iter(), &[a_disc]);
 /// assert_eq!(split3.group(a_disc).unwrap().len(), 1);

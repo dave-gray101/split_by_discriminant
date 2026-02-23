@@ -1,6 +1,3 @@
-// Integration-like unit tests for the library. These are kept in a separate
-// file to keep `lib.rs` focused on public API.
-
 use super::*;
 use std::mem::discriminant;
 
@@ -11,47 +8,41 @@ enum E {
     C,
 }
 
-// implement `Extract` for every pair of `E` and an inner type we care about
-impl Extract<i32> for E {
-    fn extract(&mut self) -> Option<&mut i32> {
-        if let E::A(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+// ── Extractor for the local E enum (simulates user_helper for a local type) ──
+// EExtractor is local to this crate, so ExtractFrom impls are always legal.
+struct EExtractor;
+
+impl ExtractFrom<E, i32> for EExtractor {
+    fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut i32> {
+        if let E::A(v) = t { Some(v) } else { None }
     }
 }
 
-impl Extract<String> for E {
-    fn extract(&mut self) -> Option<&mut String> {
-        if let E::B(v) = self {
-            Some(v)
-        } else {
-            None
-        }
+impl ExtractFrom<E, String> for EExtractor {
+    fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut String> {
+        if let E::B(v) = t { Some(v) } else { None }
     }
 }
 
 #[test]
-fn split_and_extract() {
+fn bound_split_and_extract() {
     let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::C];
     let a_disc = discriminant(&E::A(0));
     let b_disc = discriminant(&E::B(String::new()));
 
-    // create the split in its own scope so we can drop it before looking
-    // at `data` again; the borrow-checker is happy once `split` is gone.
     {
-        let mut split = split_by_discriminant(&mut data, &[a_disc, b_disc]);
+        let split = split_by_discriminant(&mut data, &[a_disc, b_disc]);
+        let mut bound = BoundSplit::new(split, EExtractor);
 
-        // raw access still available
-        assert!(split.group(a_disc).unwrap().len() == 2);
+        // raw group access still available on BoundSplit directly
+        assert_eq!(bound.group(a_disc).unwrap().len(), 2);
 
-        // ergonomic extraction of the inner type
-        let mut ints: Vec<&mut i32> = split.extract(a_disc).unwrap();
+        // ergonomic extraction via the bound extractor
+        let mut ints: Vec<&mut i32> = bound.extract(a_disc).unwrap();
         assert_eq!(ints.len(), 2);
         *ints[0] = 10;
 
-        let mut strings: Vec<&mut String> = split.extract(b_disc).unwrap();
+        let mut strings: Vec<&mut String> = bound.extract(b_disc).unwrap();
         assert_eq!(strings.len(), 1);
         strings[0].push_str("!");
     }
@@ -86,16 +77,16 @@ fn generic_function_infers_reference_kind() {
     let mut data = [E::A(4), E::B("x".into())];
     let a_disc = discriminant(&E::A(0));
 
-    // mutable iterator yields &mut E, so R = &mut E
+    // mutable iterator yields &mut E, so R = &mut E; extract_with is available
     let mut s1 = split_by_discriminant(&mut data[..], &[a_disc]);
-    // we can call extract because R: BorrowMut
-    let _ints: Vec<&mut i32> = s1.extract(a_disc).unwrap();
+    let _ints: Vec<&mut i32> = s1
+        .extract_with(a_disc, |e| if let E::A(v) = e { Some(v) } else { None })
+        .unwrap();
 
     let data2 = [E::A(5), E::C];
-    // immutable iterator yields &E, hence R = &E
+    // immutable iterator yields &E, hence R = &E; extract_with not available
     let mut s2: SplitByDiscriminant<_, &E> =
         split_by_discriminant(&data2[..], &[a_disc]);
-    // s2.extract::<i32>(a_disc); // would not compile
     assert_eq!(s2.group(a_disc).unwrap().len(), 1);
 }
 
@@ -139,9 +130,48 @@ fn extract_nonexistent_discriminant_returns_none() {
     let a_disc = discriminant(&E::A(0));
     let c_disc = discriminant(&E::C);
 
-    // only split on A; C is absent so extract should return None
+    // only split on A; C is absent — extract_with and BoundSplit::extract
+    // must both return None
     let mut split = split_by_discriminant(&mut data, &[a_disc]);
-    assert!(split.extract::<i32>(c_disc).is_none());
+    assert!(split
+        .extract_with::<i32, _>(c_disc, |e| if let E::A(v) = e { Some(v) } else { None })
+        .is_none());
+
+    let split2 = split_by_discriminant(&mut data, &[a_disc]);
+    let mut bound = BoundSplit::new(split2, EExtractor);
+    assert!(bound.extract::<i32>(c_disc).is_none());
+}
+
+/// Simulate a downstream crate that owns neither the trait nor the enum type:
+/// extract_with takes a plain closure so no trait impl is required at all.
+#[test]
+fn extract_with_no_trait_impl_required() {
+    let mut data = [E::A(1), E::A(2), E::B("hi".into()), E::C];
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut split = split_by_discriminant(&mut data, &[a_disc, b_disc]);
+
+    // closure plays the role of what user_helper would export as a free fn
+    let mut ints: Vec<&mut i32> = split
+        .extract_with(a_disc, |e| if let E::A(v) = e { Some(v) } else { None })
+        .unwrap();
+    assert_eq!(ints.len(), 2);
+    *ints[0] = 99;
+
+    let strings: Vec<&mut String> = split
+        .extract_with(b_disc, |e| if let E::B(s) = e { Some(s) } else { None })
+        .unwrap();
+    assert_eq!(strings.len(), 1);
+
+    // nonexistent discriminant still returns None
+    let c_disc = discriminant(&E::C);
+    assert!(split
+        .extract_with::<i32, _>(c_disc, |e| if let E::A(v) = e { Some(v) } else { None })
+        .is_none());
+
+    drop(split);
+    assert_eq!(data[0], E::A(99));
 }
 
 #[test]
@@ -165,6 +195,115 @@ fn map_by_discriminant_applies_closures() {
 
     let others = split.into_parts().1;
     assert_eq!(others, vec![String::from("OTHER:C")]);
+}
+
+/// Simulates the four-crate workflow using a genuine std-library enum in place
+/// of `external_enums`:
+///
+///  - `external_enums`       → `std::net::IpAddr`    (foreign; cannot be changed)
+///  - `split_by_discriminant` → this crate            (provides the split + BoundSplit)
+///  - `user_helper`          → `IpAddrExtractor`      (local glue; owns ExtractFrom impls)
+///  - `user_downstream`      → the test functions     (calls BoundSplit::extract)
+///
+/// `std::net::IpAddr`, `Ipv4Addr`, and `Ipv6Addr` are all defined outside
+/// this crate.  The orphan rule would block `impl Extract<Ipv4Addr> for
+/// IpAddr` here, but `impl ExtractFrom<IpAddr, Ipv4Addr> for IpAddrExtractor`
+/// is always legal because `IpAddrExtractor` is local.
+mod foreign_enum_workflow {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::mem::discriminant;
+
+    // ── simulates user_helper ───────────────────────────────────────────────
+    pub struct IpAddrExtractor;
+
+    impl ExtractFrom<IpAddr, Ipv4Addr> for IpAddrExtractor {
+        fn extract_from<'a>(&self, t: &'a mut IpAddr) -> Option<&'a mut Ipv4Addr> {
+            if let IpAddr::V4(v) = t { Some(v) } else { None }
+        }
+    }
+
+    impl ExtractFrom<IpAddr, Ipv6Addr> for IpAddrExtractor {
+        fn extract_from<'a>(&self, t: &'a mut IpAddr) -> Option<&'a mut Ipv6Addr> {
+            if let IpAddr::V6(v) = t { Some(v) } else { None }
+        }
+    }
+
+    // ── simulates user_downstream ───────────────────────────────────────────
+
+    #[test]
+    fn bound_split_extracts_v4_and_v6() {
+        let mut addrs: Vec<IpAddr> = vec![
+            IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)),
+            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), // ::1
+            IpAddr::V4(Ipv4Addr::new(5, 6, 7, 8)),
+        ];
+
+        let v4_disc = discriminant(&IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+        let v6_disc = discriminant(&IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)));
+
+        {
+            let split = split_by_discriminant(&mut addrs, &[v4_disc, v6_disc]);
+            let mut bound = BoundSplit::new(split, IpAddrExtractor);
+
+            // U inferred from E: ExtractFrom<IpAddr, U> — no closure at call site
+            {
+                let mut v4s: Vec<&mut Ipv4Addr> = bound.extract(v4_disc).unwrap();
+                assert_eq!(v4s.len(), 2);
+                // mutate through the reference — visible in addrs after borrow ends
+                *v4s[0] = Ipv4Addr::new(10, 0, 0, 1);
+            }
+            {
+                let v6s: Vec<&mut Ipv6Addr> = bound.extract(v6_disc).unwrap();
+                assert_eq!(v6s.len(), 1);
+            }
+
+            // group() and extract_with() are available directly on BoundSplit
+            assert_eq!(bound.group(v4_disc).unwrap().len(), 2);
+            let _ = bound.extract_with(v4_disc, |a: &mut IpAddr| {
+                if let IpAddr::V4(v) = a { Some(v) } else { None }
+            });
+
+            // consuming methods reached via into_inner()
+            let (groups, others) = bound.into_inner().into_parts();
+            assert_eq!(groups.get(&v4_disc).unwrap().len(), 2);
+            assert_eq!(others.len(), 0);
+        }
+
+        // borrow fully released — mutation is visible in original vec
+        assert_eq!(addrs[0], IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
+    }
+
+    #[test]
+    fn bound_split_nonexistent_discriminant_returns_none() {
+        let mut addrs: Vec<IpAddr> = vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))];
+        let v4_disc = discriminant(&IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+        let v6_disc = discriminant(&IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)));
+
+        // only v4 in the split — v6_disc is absent
+        let split = split_by_discriminant(&mut addrs, &[v4_disc]);
+        let mut bound = BoundSplit::new(split, IpAddrExtractor);
+
+        assert!(bound.extract::<Ipv6Addr>(v6_disc).is_none());
+    }
+
+    #[test]
+    fn bound_split_into_inner_reaches_consuming_methods() {
+        let mut addrs: Vec<IpAddr> = vec![
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)),
+        ];
+        let v4_disc = discriminant(&IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+        let v6_disc = discriminant(&IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)));
+
+        let split = split_by_discriminant(&mut addrs, &[v4_disc, v6_disc]);
+        let bound = BoundSplit::new(split, IpAddrExtractor);
+
+        // map_groups is only on SplitByDiscriminant — reached via into_inner()
+        let counts: Map<_, usize> = bound.into_inner().map_groups(|v| v.len());
+        assert_eq!(counts.get(&v4_disc).copied(), Some(1));
+        assert_eq!(counts.get(&v6_disc).copied(), Some(1));
+    }
 }
 
 #[test]
