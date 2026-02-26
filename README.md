@@ -37,8 +37,22 @@ to differ, and lets you perform on-the-fly transformations during partitioning.
 
 ### `SplitByDiscriminant<T, G, O>` struct
 
-The result of a split.  `G` is the group element type and `O` is the "others"
-element type (defaults to `G` for `split_by_discriminant`).
+The result of a split operation.  Every parameter has a clear responsibility:
+
+| Parameter | Role |
+|-----------|------|
+| `T` | The underlying enum (or any type with a `Discriminant`). Used to
+compute the map keys (`Discriminant<T>`) and for `Borrow<T>` bounds on
+input items.
+| `G` | Type stored inside each matching group.  Defaults to the iterator's
+item type, but may be transformed by `map_by_discriminant` (e.g.
+`String`, `&mut i32`, etc.).
+| `O` | Type stored in the “others” bucket.  Defaults to `G` to make the
+common case ergonomic, but you can choose a different type to handle
+unmatched items specially (e.g. map them to `()` or a count).
+
+The generic trio lets you express use cases where the group and
+others types differ without resorting to `enum` or `Box<dyn>`.
 
 Methods:
 
@@ -65,9 +79,22 @@ is satisfied even when `T` and `U` both come from external crates.
 
 ### `SplitWithExtractor<T, G, O, E>` struct
 
-Wraps a `SplitByDiscriminant` by binding it to an extractor `E`.  Provides an
-ergonomic `extract(disc)` that requires no closure at the call site —
-`U` is resolved via `E: ExtractFrom<T, U>`.
+A thin wrapper around `SplitByDiscriminant` that pairs it with an extractor
+value `E`.  The four type parameters serve these roles:
+
+* `T` – the enum/`Discriminant` target, carried through from the inner split.
+* `G` – group element type; forwarded from `SplitByDiscriminant`.
+* `O` – others element type; also forwarded and defaults to `G` when the
+  split is originally constructed.
+* `E` – the extractor type that implements `ExtractFrom<T, U>` for one or more
+  output types `U`.  The extractor is usually a zero-sized local struct;
+  its purpose is to give you a *constraint* that allows `extract::<U>` to
+  infer the right `U` without a closure.  Because the impl lives on your
+  local type, the orphan rule is satisfied even when `T` and `U` are
+  foreign.
+
+With this design every parameter can vary independently and has a real use
+case in the docs and tests.
 
 Methods available directly on `SplitWithExtractor`:
 

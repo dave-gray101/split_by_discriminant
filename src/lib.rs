@@ -83,15 +83,71 @@ use std::borrow::{Borrow, BorrowMut};
 /// ```
 /// Result of a discriminant split.
 ///
-/// `G` is the element type stored in each group, and `O` is the element
-/// type used for the "others" bucket.  When both are the same – the common
-/// case for [`split_by_discriminant`] – the third type parameter can be
-/// omitted thanks to the default.
+/// The struct is generic over *three* types to maximise flexibility:
+///
+/// * `T` – the enum (or other type) whose discriminant is used for
+///   grouping.  Every discriminant key in `groups` has type
+///   [`Discriminant<T>`].
+/// * `G` – the type stored **inside the matching groups**.  This is usually
+///   the iterator's item type, but with `map_by_discriminant` it can be a
+///   transformed value (e.g. mapping `E` items to `String` summaries, or
+///   storing `&mut i32` extracted from `&mut E`).
+/// * `O` – the type stored in the “others” bucket.  It defaults to `G` so
+///   the simple `split_by_discriminant` case is ergonomic, but you can make
+///   it different when you want to treat unmatched items specially (for
+///   example, mapping them to `()` or a count).
+///
+/// Having `G` and `O` distinct enables `map_by_discriminant` to return a
+/// `SplitByDiscriminant<T, U, V>` where matched items become `U` and
+/// unmatched ones become `V`.
+///
+/// # Examples
+///
+/// ```rust
+/// # use split_by_discriminant::{split_by_discriminant, map_by_discriminant};
+/// # use split_by_discriminant::SplitByDiscriminant;
+/// # use std::mem::discriminant;
+/// #[derive(Debug, PartialEq)] enum E { A(i32), B };
+/// let a_disc = discriminant(&E::A(0));
+///
+/// // basic case where both types are the same
+/// let data = [E::A(1), E::B];
+/// let mut split: SplitByDiscriminant<_, &E> =
+///     split_by_discriminant(&data[..], &[a_disc]);
+/// assert_eq!(split.group(a_disc).unwrap()[0], &E::A(1));
+///
+/// // custom mapping: matched items → String, others → unit
+/// let mut split2 = map_by_discriminant(&data[..], &[a_disc],
+///     |e| format!("match:{:?}", e),
+///     |_e| (),
+/// );
+/// assert_eq!(split2.group(a_disc).unwrap()[0], "match:A(1)");
+/// ```
+
+/// Actual struct definition (above examples reference it).
+///
+/// The struct is generic over *three* types to maximise flexibility:
+///
+/// * `T` – the enum (or other type) whose discriminant is used for
+///   grouping.  Every discriminant key in `groups` has type
+///   [`Discriminant<T>`].
+/// * `G` – the type stored **inside the matching groups**.  This is usually
+///   the iterator's item type, but with `map_by_discriminant` it can be a
+///   transformed value (e.g. mapping `E` items to `String` summaries, or
+///   storing `&mut i32` extracted from `&mut E`).
+/// * `O` – the type stored in the “others” bucket.  It defaults to `G` so
+///   the simple `split_by_discriminant` case is ergonomic, but you can make
+///   it different when you want to treat unmatched items specially (for
+///   example, mapping them to `()` or a count).
+///
+/// Having `G` and `O` distinct enables `map_by_discriminant` to return a
+/// `SplitByDiscriminant<T, U, V>` where matched items become `U` and
+/// unmatched ones become `V`.
+///
 pub struct SplitByDiscriminant<T, G, O = G> {
     groups: Map<Discriminant<T>, Vec<G>>,
     others: Vec<O>,
 }
-
 
 impl<T, G, O> SplitByDiscriminant<T, G, O> {
     /// Deconstruct into the owned collections.
@@ -225,16 +281,31 @@ pub trait ExtractFrom<T, U> {
 
 /// A [`SplitByDiscriminant`] with an extractor bound up front.
 ///
-/// Wraps a [`SplitByDiscriminant`] together with an extractor value `E`.
-/// The [`extract`](SplitWithExtractor::extract) method resolves the extraction logic
-/// via `E: ExtractFrom<T, U>`, so no closure is needed at the call site.
+/// This wrapper carries **four** generic parameters:
 ///
-/// Construct with [`SplitWithExtractor::new`] after calling [`split_by_discriminant`].
-/// Non-consuming methods ([`group`](SplitWithExtractor::group),
-/// [`extract_with`](SplitWithExtractor::extract_with),
-/// [`extract`](SplitWithExtractor::extract)) are available directly on `SplitWithExtractor`.
-/// To reach consuming methods (`into_parts`, `map_groups`, `map_others`),
-/// call [`into_inner`](SplitWithExtractor::into_inner) first.
+/// * `T` – same as on the inner split, the type whose discriminant keys the
+///   groups.
+/// * `G` – element type stored in each group; forwarded from the inner
+///   `SplitByDiscriminant`.
+/// * `O` – element type for the others bucket; also forwarded from the inner
+///   split and defaults to `G` when constructing the split itself.
+/// * `E` – an *extractor value* that implements `ExtractFrom<T, U>` for one or
+///   more output types `U`.  This parameter is what makes the API
+///   ergonomic: once you create `SplitWithExtractor<T, G, O, E>`, calls to
+///   `extract::<U>(id)` automatically select the correct `U` based on the
+///   `E: ExtractFrom<T, U>` impl in scope.  The extractor type is typically a
+///   zero‑sized struct defined locally in your crate.
+///
+/// The struct simply holds the inner split and the extractor.  You can
+/// unwrap it with [`into_inner`] when you need consuming helpers.
+///
+/// Construct with [`SplitWithExtractor::new`] after calling
+/// [`split_by_discriminant`].  Non-consuming methods
+/// ([`group`](SplitWithExtractor::group), [`extract_with`](SplitWithExtractor::extract_with),
+/// [`extract`](SplitWithExtractor::extract)) are available directly on
+/// `SplitWithExtractor`.  To reach consuming methods (`into_parts`,
+/// `map_groups`, `map_others`), call [`into_inner`](SplitWithExtractor::into_inner)
+/// first.
 ///
 /// # Example
 ///
@@ -283,6 +354,24 @@ pub trait ExtractFrom<T, U> {
 /// let (_groups, others) = extractor.into_inner().into_parts();
 /// assert_eq!(others.len(), 0);
 /// ```
+/// A [`SplitByDiscriminant`] paired with a user‑supplied extractor value.
+///
+/// This wrapper carries exactly the same `T`, `G`, and `O` parameters as the
+/// inner split (they describe the enum type and the element types for groups
+/// and others).  The extra parameter `E` is the extractor type that implements
+/// `ExtractFrom<T, U>` for one or more output types `U`; it allows the
+/// ergonomic [`extract`] method to infer `U` without a closure at the call
+/// site.  Because the impl lives on a *local* extractor type, the orphan rule
+/// is satisfied even when `T` and `U` are foreign.
+///
+/// Type parameters:
+/// * `T` – the enum/`Discriminant` target for the split.
+/// * `G` – element type stored in each matching group.
+/// * `O` – element type stored in `others` (defaults to `G`).
+/// * `E` – extractor value type implementing `ExtractFrom<T, U>`.
+///
+/// See the crate documentation and README for examples and the four‑crate
+/// pattern that motivates this design.
 pub struct SplitWithExtractor<T, G, O, E> {
     inner: SplitByDiscriminant<T, G, O>,
     extractor: E,
