@@ -297,7 +297,7 @@ pub trait ExtractFrom<T, U> {
 ///   zero‑sized struct defined locally in your crate.
 ///
 /// The struct simply holds the inner split and the extractor.  You can
-/// unwrap it with [`into_inner`] when you need consuming helpers.
+/// unwrap it with `into_inner` when you need consuming helpers.
 ///
 /// Construct with [`SplitWithExtractor::new`] after calling
 /// [`split_by_discriminant`].  Non-consuming methods
@@ -360,7 +360,7 @@ pub trait ExtractFrom<T, U> {
 /// inner split (they describe the enum type and the element types for groups
 /// and others).  The extra parameter `E` is the extractor type that implements
 /// `ExtractFrom<T, U>` for one or more output types `U`; it allows the
-/// ergonomic [`extract`] method to infer `U` without a closure at the call
+/// ergonomic `extract` method to infer `U` without a closure at the call
 /// site.  Because the impl lives on a *local* extractor type, the orphan rule
 /// is satisfied even when `T` and `U` are foreign.
 ///

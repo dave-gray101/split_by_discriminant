@@ -1,6 +1,6 @@
 [package]
 name = "split_by_discriminant"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 authors = ["Dave Lee <dave@gray101.com>"]
 license = "MIT"
