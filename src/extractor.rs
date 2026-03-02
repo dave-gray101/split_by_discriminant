@@ -35,6 +35,66 @@ pub trait ExtractFrom<T, U> {
     fn extract_from<'a>(&self, t: &'a mut T) -> Option<&'a mut U>;
 }
 
+/// Consuming counterpart of [`ExtractFrom`].
+///
+/// Where `ExtractFrom` reborrows via `&mut T` (which shortens any inner
+/// lifetime), `TakeFrom` receives `G` **by value** (moved), so any reference
+/// derived from it carries the full original lifetime.
+///
+/// # Blanket implementation
+///
+/// A blanket impl is provided for every `E: ExtractFrom<T, U>`, covering the
+/// `G = &mut T` case:
+///
+/// ```text
+/// impl<'a, T, U, E: ExtractFrom<T, U>> TakeFrom<&'a mut T, &'a mut U> for E
+/// ```
+/// This means you never need to implement `TakeFrom` manually if you have
+/// already implemented [`ExtractFrom`]; the blanket impl makes your extractor
+/// automatically compatible with [`SplitWithExtractor::take_extracted`].
+///
+/// # When to implement directly
+///
+/// Implement `TakeFrom<G, U>` directly only when `G` is **not** `&mut T` —
+/// for example when `G` is an owned enum value from `map_by_discriminant`,
+/// and you want to factor extraction into a reusable trait.
+///
+/// # Example
+///
+/// ```rust
+/// use split_by_discriminant::{ExtractFrom, TakeFrom,
+///                             split_by_discriminant, SplitWithExtractor};
+/// use std::mem::discriminant;
+///
+/// #[derive(Debug)] enum E { A(i32), B }
+/// struct EEx;
+/// impl ExtractFrom<E, i32> for EEx {
+///     fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut i32> {
+///         if let E::A(v) = t { Some(v) } else { None }
+///     }
+/// }
+/// // TakeFrom<&mut E, &mut i32> is provided for free by the blanket impl.
+///
+/// let mut data = [E::A(1), E::A(2), E::B];
+/// let a_disc = discriminant(&E::A(0));
+/// let ints: Vec<&mut i32> = {
+///     let split = split_by_discriminant(&mut data[..], &[a_disc]);
+///     let mut ex = SplitWithExtractor::new(split, EEx);
+///     ex.take_extracted(a_disc).unwrap()
+/// };
+/// assert_eq!(ints.len(), 2);
+/// ```
+pub trait TakeFrom<G, U> {
+    fn take_from(&self, g: G) -> Option<U>;
+}
+
+// Blanket: every ExtractFrom<T, U> impl is automatically a TakeFrom<&'a mut T, &'a mut U>.
+impl<'a, T, U, E: ExtractFrom<T, U>> TakeFrom<&'a mut T, &'a mut U> for E {
+    fn take_from(&self, g: &'a mut T) -> Option<&'a mut U> {
+        self.extract_from(g)
+    }
+}
+
 /// A [`SplitByDiscriminant`] with an extractor bound up front.
 ///
 /// This wrapper carries **four** generic parameters:
@@ -56,7 +116,7 @@ pub trait ExtractFrom<T, U> {
 /// unwrap it with `into_inner` when you need consuming helpers.
 ///
 /// Construct with [`SplitWithExtractor::new`] after calling
-/// [`split_by_discriminant`].  Non-consuming methods
+/// [`crate::split_by_discriminant`].  Non-consuming methods
 /// ([`group`](SplitWithExtractor::group), [`extract_with`](SplitWithExtractor::extract_with),
 /// [`extract`](SplitWithExtractor::extract)) are available directly on
 /// `SplitWithExtractor`.  To reach consuming methods (`into_parts`,
@@ -147,6 +207,14 @@ impl<T, G, O, E> SplitWithExtractor<T, G, O, E> {
         self.inner
     }
 
+    /// Borrow the unmatched items, forwarded to the inner
+    /// [`SplitByDiscriminant`].
+    ///
+    /// See [`SplitByDiscriminant::others`] for full documentation.
+    pub fn others(&self) -> &[O] {
+        self.inner.others()
+    }
+
     /// Access the stored group for a discriminant.
     pub fn group(&mut self, id: Discriminant<T>) -> Option<&Vec<G>> {
         self.inner.group(id)
@@ -159,6 +227,91 @@ impl<T, G, O, E> SplitWithExtractor<T, G, O, E> {
     /// the lifetime-preservation guarantee and idiomatic usage.
     pub fn take_group(&mut self, id: Discriminant<T>) -> Option<Vec<G>> {
         self.inner.take_group(id)
+    }
+
+    /// Remove the group for `id` and map each element through `f`, forwarded
+    /// to the inner [`SplitByDiscriminant`].
+    ///
+    /// See [`SplitByDiscriminant::take_group_mapped`] for full documentation.
+    pub fn take_group_mapped<U, F>(&mut self, id: Discriminant<T>, f: F) -> Option<Vec<U>>
+    where
+        F: FnMut(G) -> U,
+    {
+        self.inner.take_group_mapped(id, f)
+    }
+
+    /// Remove the group for `id`, apply `f` to each element **by value**, and
+    /// collect the results that matched (filter-map semantics), forwarded to
+    /// the inner [`SplitByDiscriminant`].
+    ///
+    /// See [`SplitByDiscriminant::take_group_with`] for full documentation,
+    /// including the lifetime-preservation guarantee.
+    pub fn take_group_with<U, F>(&mut self, id: Discriminant<T>, f: F) -> Option<Vec<U>>
+    where
+        F: FnMut(G) -> Option<U>,
+    {
+        self.inner.take_group_with(id, f)
+    }
+
+    /// Remove and return the others vector from the inner split.
+    ///
+    /// See [`SplitByDiscriminant::take_others`] for full documentation.
+    pub fn take_others(&mut self) -> Vec<O> {
+        self.inner.take_others()
+    }
+
+    /// Remove the group for `id` and extract inner values using the bound
+    /// extractor — no closure needed.
+    ///
+    /// This is the consuming counterpart of [`extract`](SplitWithExtractor::extract):
+    /// where `extract` reborrows each element through `&mut self` (shortening
+    /// any inner lifetime), `take_extracted` **moves** each `G` through the
+    /// extractor, so any reference derived from it carries the full original
+    /// lifetime.
+    ///
+    /// The bound `E: TakeFrom<G, U>` is satisfied automatically for the common
+    /// `G = &mut T` case via the blanket impl over `ExtractFrom<T, U>` — you
+    /// do not need to implement `TakeFrom` separately.
+    ///
+    /// Returns `None` if `id` was not among the discriminants passed to
+    /// [`crate::split_by_discriminant`].  Calling it again for the same `id` also
+    /// returns `None` because the group has been consumed.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use split_by_discriminant::{split_by_discriminant, SplitWithExtractor, ExtractFrom};
+    /// use std::mem::discriminant;
+    ///
+    /// #[derive(Debug, PartialEq)] enum E { A(i32), B }
+    /// struct EEx;
+    /// impl ExtractFrom<E, i32> for EEx {
+    ///     fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut i32> {
+    ///         if let E::A(v) = t { Some(v) } else { None }
+    ///     }
+    /// }
+    ///
+    /// let mut data = [E::A(1), E::A(2), E::B];
+    /// let a_disc = discriminant(&E::A(0));
+    ///
+    /// // ints outlives the SplitWithExtractor — full 'items lifetime
+    /// let mut ints: Vec<&mut i32> = {
+    ///     let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    ///     let mut ex = SplitWithExtractor::new(split, EEx);
+    ///     ex.take_extracted(a_disc).unwrap()
+    /// };
+    /// assert_eq!(ints.len(), 2);
+    /// // mutate through the returned refs
+    /// *ints[0] = 99;
+    /// drop(ints);
+    /// assert_eq!(data[0], E::A(99));
+    /// ```
+    pub fn take_extracted<U>(&mut self, id: Discriminant<T>) -> Option<Vec<U>>
+    where
+        E: TakeFrom<G, U>,
+    {
+        let extractor = &self.extractor;
+        self.inner.take_group_with(id, |g| extractor.take_from(g))
     }
 }
 
@@ -180,7 +333,7 @@ where
     ///
     /// `U` is inferred from the `E: ExtractFrom<T, U>` bound and the
     /// call-site type annotation.  Returns `None` if `id` was not among the
-    /// discriminants passed to [`split_by_discriminant`].
+    /// discriminants passed to [`crate::split_by_discriminant`].
     pub fn extract<U>(&mut self, id: Discriminant<T>) -> Option<Vec<&mut U>>
     where
         E: ExtractFrom<T, U>,

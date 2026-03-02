@@ -118,6 +118,33 @@ impl<T, G, O> SplitByDiscriminant<T, G, O> {
         (self.groups, self.others)
     }
 
+    /// Borrow the unmatched items.
+    ///
+    /// Returns a slice of all items whose discriminant was not among those
+    /// passed to [`split_by_discriminant`](crate::split_by_discriminant).  The
+    /// slice is empty if every item matched, or if [`take_others`](SplitByDiscriminant::take_others)
+    /// has already been called.
+    ///
+    /// Takes `&self` — no mutable borrow required — so it is safe to call
+    /// alongside other shared borrows.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use split_by_discriminant::split_by_discriminant;
+    /// use std::mem::discriminant;
+    ///
+    /// #[derive(Debug)] enum E { A(i32), B, C }
+    /// let mut data = [E::A(1), E::B, E::C];
+    /// let a_disc = discriminant(&E::A(0));
+    ///
+    /// let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    /// assert_eq!(split.others().len(), 2); // B and C
+    /// ```
+    pub fn others(&self) -> &[O] {
+        &self.others
+    }
+
     /// Access the stored group for a discriminant.
     pub fn group(&mut self, id: Discriminant<T>) -> Option<&Vec<G>> {
         self.groups.get(&id)
@@ -156,6 +183,127 @@ impl<T, G, O> SplitByDiscriminant<T, G, O> {
     pub fn take_group(&mut self, id: Discriminant<T>) -> Option<Vec<G>> {
         self.groups.remove(&id)
     }
+
+    /// Remove the group for `id` and map each element through `f`, returning
+    /// the transformed values.
+    ///
+    /// This is the per-discriminant analogue of [`map_groups`](SplitByDiscriminant::map_groups):
+    /// where `map_groups` consumes `self` and transforms *all* groups at once,
+    /// `take_group_mapped` removes a *single* group and applies a per-element
+    /// closure that receives each `G` **by value**.  No `BorrowMut` bound is
+    /// required — the closure works directly with the stored element type.
+    ///
+    /// Returns `None` when `id` was not among the discriminants passed to
+    /// [`split_by_discriminant`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use split_by_discriminant::split_by_discriminant;
+    /// use std::mem::discriminant;
+    ///
+    /// #[derive(Debug)] enum E { A(i32), B }
+    /// let mut data = [E::A(1), E::A(2), E::B];
+    /// let a_disc = discriminant(&E::A(0));
+    ///
+    /// let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+    /// let labels: Vec<String> = split
+    ///     .take_group_mapped(a_disc, |e| format!("{:?}", e))
+    ///     .unwrap();
+    /// assert_eq!(labels, ["A(1)", "A(2)"]);
+    /// assert!(split.take_group_mapped(a_disc, |e| format!("{:?}", e)).is_none());
+    /// ```
+    pub fn take_group_mapped<U, F>(&mut self, id: Discriminant<T>, mut f: F) -> Option<Vec<U>>
+    where
+        F: FnMut(G) -> U,
+    {
+        Some(self.groups.remove(&id)?.into_iter().map(|g| f(g)).collect())
+    }
+
+    /// Remove the group for `id`, apply `f` to each element **by value**, and
+    /// collect the results that matched (filter-map semantics).
+    ///
+    /// This is the consuming counterpart of
+    /// [`extract_with`](SplitByDiscriminant::extract_with): where `extract_with`
+    /// reborrows elements through `&mut self` (shortening any inner lifetime),
+    /// `take_group_with` **moves** each `G` into the closure, so any reference
+    /// derived from it carries the original, longer lifetime.
+    ///
+    /// No [`BorrowMut`] bound is required — the closure works directly with
+    /// the stored element type `G`.
+    ///
+    /// Items for which `f` returns `None` are skipped.  Returns `None` when
+    /// `id` was not among the discriminants passed to [`split_by_discriminant`].
+    ///
+    /// # Lifetime preservation
+    ///
+    /// When `G = &'items mut T`, the closure receives the `&'items mut T` by
+    /// value (moved out of the group).  Pattern-matching inside the closure
+    /// yields inner references that carry `'items` rather than a shorter
+    /// reborrow lifetime:
+    ///
+    /// ```rust
+    /// use split_by_discriminant::split_by_discriminant;
+    /// use std::mem::discriminant;
+    ///
+    /// #[derive(Debug)] enum E { A(i32), B }
+    /// let mut data = [E::A(1), E::A(2), E::B];
+    /// let a_disc = discriminant(&E::A(0));
+    ///
+    /// // ints outlives the split — full 'items lifetime preserved
+    /// let ints: Vec<&mut i32> = {
+    ///     let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+    ///     split.take_group_with(a_disc, |e| if let E::A(v) = e { Some(v) } else { None })
+    ///         .unwrap()
+    /// };
+    /// assert_eq!(ints.len(), 2);
+    /// ```
+    pub fn take_group_with<U, F>(&mut self, id: Discriminant<T>, mut f: F) -> Option<Vec<U>>
+    where
+        F: FnMut(G) -> Option<U>,
+    {
+        Some(
+            self.groups
+                .remove(&id)?
+                .into_iter()
+                .filter_map(|g| f(g))
+                .collect(),
+        )
+    }
+
+    /// Remove and return the others vector.
+    ///
+    /// This is the non-consuming counterpart of
+    /// [`map_others`](SplitByDiscriminant::map_others) and the "others" analogue
+    /// of [`take_group`](SplitByDiscriminant::take_group): where `into_parts`
+    /// consumes `self` to retrieve everything at once, `take_others` takes only
+    /// the unmatched items and leaves `self` intact for further `take_group*`
+    /// calls.
+    ///
+    /// The others vector is replaced with an empty `Vec` in-place, so subsequent
+    /// calls to `take_others` return an empty `Vec` rather than `None`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use split_by_discriminant::split_by_discriminant;
+    /// use std::mem::discriminant;
+    ///
+    /// #[derive(Debug)] enum E { A(i32), B }
+    /// let mut data = [E::A(1), E::A(2), E::B];
+    /// let a_disc = discriminant(&E::A(0));
+    ///
+    /// let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+    /// let others: Vec<&mut E> = split.take_others();
+    /// assert_eq!(others.len(), 1); // E::B
+    ///
+    /// // split is still usable — groups are intact
+    /// let group: Vec<&mut E> = split.take_group(a_disc).unwrap();
+    /// assert_eq!(group.len(), 2);
+    /// ```
+    pub fn take_others(&mut self) -> Vec<O> {
+        std::mem::take(&mut self.others)
+    }
 }
 
 // implement extract only when we actually have mutable access to the inner T
@@ -165,7 +313,6 @@ impl<T, G, O> SplitByDiscriminant<T, G, O>
 where
     G: BorrowMut<T>,
 {
-    /// Closure-based extraction that sidesteps the orphan rule.
     ///
     /// The caller supplies `f`, which maps `&mut T → Option<&mut U>`, so **no
     /// trait implementation is required**.  This is the recommended entry point
