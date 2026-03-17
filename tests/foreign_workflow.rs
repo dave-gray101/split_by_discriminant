@@ -1,18 +1,22 @@
-use std::mem::discriminant;
+﻿use std::mem::discriminant;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use split_by_discriminant::{split_by_discriminant, ExtractFrom, SplitWithExtractor};
+use split_by_discriminant::{split_by_discriminant, VariantExtractFrom, SplitWithExtractor};
 
-// ── simulates user_helper ───────────────────────────────────────────────
+// ── simulates user_helper ──────────────────────────────────────
+// The factory crate defines one extractor type and implements VariantExtractFrom
+// once per variant — downstream callers just write:
+//   let v4s: Vec<&mut Ipv4Addr> = extractor.extract(v4_disc).unwrap();
+// and the compiler infers which impl to use from the binding type.
 pub struct IpAddrExtractor;
 
-impl ExtractFrom<IpAddr, Ipv4Addr> for IpAddrExtractor {
+impl VariantExtractFrom<IpAddr, Ipv4Addr> for IpAddrExtractor {
     fn extract_from<'a>(&self, t: &'a mut IpAddr) -> Option<&'a mut Ipv4Addr> {
         if let IpAddr::V4(v) = t { Some(v) } else { None }
     }
 }
 
-impl ExtractFrom<IpAddr, Ipv6Addr> for IpAddrExtractor {
+impl VariantExtractFrom<IpAddr, Ipv6Addr> for IpAddrExtractor {
     fn extract_from<'a>(&self, t: &'a mut IpAddr) -> Option<&'a mut Ipv6Addr> {
         if let IpAddr::V6(v) = t { Some(v) } else { None }
     }
@@ -35,7 +39,7 @@ fn split_with_extractor_extracts_v4_and_v6() {
         let split = split_by_discriminant(&mut addrs, &[v4_disc, v6_disc]);
         let mut extractor = SplitWithExtractor::new(split, IpAddrExtractor);
 
-        // U inferred from E: ExtractFrom<IpAddr, U> — no closure at call site
+        // U inferred from binding — no closure, no turbofish, no selector ZST
         {
             let mut v4s: Vec<&mut Ipv4Addr> = extractor.extract(v4_disc).unwrap();
             assert_eq!(v4s.len(), 2);
@@ -47,11 +51,10 @@ fn split_with_extractor_extracts_v4_and_v6() {
             assert_eq!(v6s.len(), 1);
         }
 
-        // group() and extract_with() are available directly on SplitWithExtractor
-        assert_eq!(extractor.group(v4_disc).unwrap().len(), 2);
-        let _ = extractor.extract_with(v4_disc, |a: &mut IpAddr| {
-            if let IpAddr::V4(v) = a { Some(v) } else { None }
-        });
+        // get() and extract() are available directly on SplitWithExtractor
+        assert_eq!(extractor.get(v4_disc).unwrap().len(), 2);
+        // extract again (reborrow, not consumed) to show it works
+        let _: Option<Vec<&mut Ipv4Addr>> = extractor.extract(v4_disc);
 
         // consuming methods reached via into_inner()
         let (groups, others) = extractor.into_inner().into_parts();
@@ -88,8 +91,8 @@ fn split_with_extractor_into_inner_reaches_consuming_methods() {
     let split = split_by_discriminant(&mut addrs, &[v4_disc, v6_disc]);
     let extractor = SplitWithExtractor::new(split, IpAddrExtractor);
 
-    // map_groups is only on SplitByDiscriminant — reached via into_inner()
-    let counts = extractor.into_inner().map_groups(|v| v.len());
+    // map_all is only on SplitByDiscriminant — reached via into_inner()
+    let counts = extractor.into_inner().map_all(|v: Vec<&mut IpAddr>| v.len());
     assert_eq!(counts.get(&v4_disc).copied(), Some(1));
     assert_eq!(counts.get(&v6_disc).copied(), Some(1));
 }

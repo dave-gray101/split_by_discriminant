@@ -11,8 +11,9 @@ pub(crate) type Map<K, V> = std::collections::HashMap<K, V>;
 pub(crate) type Set<T> = std::collections::HashSet<T>;
 
 mod split;
-mod extractor;
+mod extractor_traits;
+mod extractor_impls;
 
-pub use split::{SplitByDiscriminant, split_by_discriminant, map_by_discriminant};
-pub use extractor::{ExtractFrom, TakeFrom, SplitWithExtractor};
+pub use split::{DiscriminantMap, split_by_discriminant, map_by_discriminant};
+pub use extractor_traits::{SimpleExtractFrom, VariantExtractFrom, ExtractFrom, TakeFrom, SplitWithExtractor};
 

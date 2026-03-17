@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Run Tarpaulin Coverage",
+            "label": "Tarpaulin: HTML Report",
             "type": "shell",
             "command": "cargo tarpaulin --workspace --follow-exec --out Html --output-dir target/tarpaulin; Start-Process target/tarpaulin/tarpaulin-report.html",
             "group": {
@@ -13,6 +13,26 @@
                 "reveal": "never",
                 "panel": "new",
                 "showReuseMessage": false,
+                "close": true,
+                "clear": true,
+                "focus": false,
+                "echo": true,
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Tarpaulin: JSON Coverage",
+            "type": "shell",
+            "command": "cargo tarpaulin --workspace --follow-exec --out Json --output-dir target/tarpaulin",
+            "group": {
+                "kind": "test",
+                "isDefault": false
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "showReuseMessage": false,
+                "close": true,
             },
             "problemMatcher": []
         },
