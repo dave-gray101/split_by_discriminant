@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Dave Lee <dave@gray101.com>"]
 license = "MIT"
+description = "proc_macros intended for use with split_by_discriminant"
+repository = "https://github.com/dave-gray101/split_by_discriminant"
 
 [lib]
 proc-macro = true
