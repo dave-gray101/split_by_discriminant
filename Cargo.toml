@@ -1,6 +1,12 @@
+[workspace]
+resolver = "3"
+members = [
+    "split_by_discriminant_macros",
+]
+
 [package]
 name = "split_by_discriminant"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 authors = ["Dave Lee <dave@gray101.com>"]
 license = "MIT"
@@ -10,7 +16,11 @@ repository = "https://github.com/dave-gray101/split_by_discriminant"
 
 [dependencies]
 indexmap = { version = "1", optional = true }
+syn = { version = "2.0.117", features = ["full"], optional = true  }
+quote = { version = "1", optional = true }
+proc-macro2 = { version = "1", optional = true }
 
 [features]
 default = []
 indexmap = ["dep:indexmap"]
+proc_macro = ["dep:syn", "dep:quote", "dep:proc-macro2"]

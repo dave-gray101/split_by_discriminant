@@ -90,9 +90,6 @@ Three traits handle different extraction scenarios:
 **See [Four-Crate Pattern Guide](docs/four-crate-pattern-guide.md) for trait selection, implementation guidance, and decision trees.** The guide covers all traits, blanket impls, and patterns for factory-crate authors.
 
 
-
-
-
 ### `SplitWithExtractor<T, G, O, E>` struct
 
 A thin wrapper around `DiscriminantMap` that pairs it with an extractor
@@ -328,6 +325,81 @@ let mut split = map_by_discriminant(&data[..], &[a_disc, b_disc],
 );
 assert_eq!(split.get(a_disc).unwrap(), &["match:A(1)".to_string()][..]);
 ```
+## Proc Macros
+
+`split_by_discriminant_macros` provides a derive macro that can implement the above logic in most simple cases.
+
+### Quickstart: `#[derive(ExtractFrom)]`
+
+The derive macro generates a zero-sized extractor type named `<EnumName>Extractor`. Use it with `SplitWithExtractor` to perform extraction without manually writing an extractor type.
+
+```rust,ignore
+use split_by_discriminant_macros::ExtractFrom;
+use split_by_discriminant::{split_by_discriminant, SplitWithExtractor};
+use std::mem::discriminant;
+
+#[derive(Debug)]
+enum E { A(i32), B }
+
+#[derive(ExtractFrom)]
+enum E { A(i32), B }
+
+let mut data = vec![E::A(1), E::B];
+let a_disc = discriminant(&E::A(0));
+
+let split = split_by_discriminant(&mut data, &[a_disc]);
+let mut extractor = SplitWithExtractor::new(split, EExtractor);
+let ints: Vec<&mut i32> = extractor.extract(a_disc).unwrap();
+```
+
+
+### Customizing `#[derive(ExtractFrom)]` names
+
+The derive macro supports a `#[extract_from(...)]` attribute to override the generated helper names.
+
+#### Custom extractor name
+
+By default `#[derive(ExtractFrom)]` generates a zero-sized extractor named `<EnumName>Extractor`.
+Use:
+
+```rust,ignore
+use split_by_discriminant_macros::ExtractFrom;
+
+#[derive(ExtractFrom)]
+#[extract_from(extractor = "MyExtractor")]
+enum E { A(i32) }
+```
+
+#### Custom selector name
+
+When the derive must generate selector types (multi-field variants or duplicate field types), the default is `Select{Enum}{Variant}`.
+You can override it on a per-variant basis or globally via a format string.
+
+Per-variant override:
+
+```rust,ignore
+use split_by_discriminant_macros::ExtractFrom;
+
+#[derive(ExtractFrom)]
+enum E {
+    #[extract_from(selector = "MySelector")]
+    A(i32, String),
+}
+```
+
+Global override (format string, supports `{}` or `{enum}`/`{variant}`):
+
+```rust,ignore
+use split_by_discriminant_macros::ExtractFrom;
+
+#[derive(ExtractFrom)]
+#[extract_from(selector = "Custom{enum}{variant}")]
+enum E { A(i32, String) }
+```
+
+(The default format is `Select{}{}`, with the first `{}` substituted by the enum name and the second by the variant name.)
+
+
 
 ## Supported inputs
 

@@ -14,6 +14,9 @@ mod split;
 mod extractor_traits;
 mod extractor_impls;
 
+#[cfg(feature = "proc_macro")]
+pub mod proc_macro;
+
 pub use split::{DiscriminantMap, split_by_discriminant, map_by_discriminant};
 pub use extractor_traits::{SimpleExtractFrom, VariantExtractFrom, ExtractFrom, TakeFrom, SplitWithExtractor};
 

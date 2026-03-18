@@ -122,11 +122,11 @@ impl<T, G, O> DiscriminantMap<T, G, O> {
     ///
     /// Returns `None` when `id` was not among the discriminants passed to the
     /// split function.
-    pub fn remove_mapped<U, F>(&mut self, id: Discriminant<T>, mut f: F) -> Option<Vec<U>>
+    pub fn remove_mapped<U, F>(&mut self, id: Discriminant<T>, f: F) -> Option<Vec<U>>
     where
         F: FnMut(G) -> U,
     {
-        Some(self.entries.remove(&id)?.into_iter().map(|g| f(g)).collect())
+        Some(self.entries.remove(&id)?.into_iter().map(f).collect())
     }
 
     /// Remove the group for `id`, apply `f` to each element **by value**, and
@@ -134,7 +134,7 @@ impl<T, G, O> DiscriminantMap<T, G, O> {
     ///
     /// Items for which `f` returns `None` are skipped.  Returns `None` when
     /// `id` was not among the discriminants passed to the split function.
-    pub fn remove_with<U, F>(&mut self, id: Discriminant<T>, mut f: F) -> Option<Vec<U>>
+    pub fn remove_with<U, F>(&mut self, id: Discriminant<T>, f: F) -> Option<Vec<U>>
     where
         F: FnMut(G) -> Option<U>,
     {
@@ -142,7 +142,7 @@ impl<T, G, O> DiscriminantMap<T, G, O> {
             self.entries
                 .remove(&id)?
                 .into_iter()
-                .filter_map(|g| f(g))
+                .filter_map(f)
                 .collect(),
         )
     }
@@ -223,7 +223,7 @@ where
 {
     let wanted: Set<Discriminant<T>> = kinds
         .into_iter()
-        .map(|k| k.borrow().clone())
+        .map(|k| *k.borrow())
         .collect();
 
     let mut entries = Map::<Discriminant<T>, Vec<U>>::new();

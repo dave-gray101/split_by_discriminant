@@ -249,7 +249,7 @@ where
     /// let ints: Vec<&mut i32> = ex.extract_simple(a_disc).unwrap();
     /// assert_eq!(ints.len(), 2);
     /// ```
-    pub fn extract_simple<'s>(&'s mut self, id: Discriminant<T>) -> Option<Vec<&'s mut <E as SimpleExtractFrom<T>>::Output>>
+    pub fn extract_simple(&mut self, id: Discriminant<T>) -> Option<Vec<&mut <E as SimpleExtractFrom<T>>::Output>>
     where
         E: SimpleExtractFrom<T>,
     {
@@ -307,7 +307,7 @@ where
     /// For multi-field tuple/struct outputs use [`extract_gat::<S>`](Self::extract_gat).
     /// For fully-annotation-free extraction (no binding type needed) use
     /// [`extract_simple`](Self::extract_simple).
-    pub fn extract<'s, U>(&'s mut self, id: Discriminant<T>) -> Option<Vec<&'s mut U>>
+    pub fn extract<U>(&mut self, id: Discriminant<T>) -> Option<Vec<&mut U>>
     where
         E: VariantExtractFrom<T, U>,
     {
