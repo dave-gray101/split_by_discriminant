@@ -93,6 +93,22 @@ fn derive_extract_from_formatted_extractor_name() {
     assert_eq!(ints, vec![&mut 1, &mut 2]);
 }
 
+#[derive(Debug, PartialEq, ExtractFrom)]
+#[extract_from(extractor = "Custom{enum}Extractor")]
+enum FormattedEnumPlaceholder { A(i32) }
+
+#[test]
+fn derive_extract_from_formatted_enum_extractor_name() {
+    let mut data = [FormattedEnumPlaceholder::A(1), FormattedEnumPlaceholder::A(2)];
+    let a_disc = discriminant(&FormattedEnumPlaceholder::A(0));
+
+    let split = split_by_discriminant(&mut data, &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, CustomFormattedEnumPlaceholderExtractor);
+
+    let ints = ex.extract_simple(a_disc).unwrap();
+    assert_eq!(ints, vec![&mut 1, &mut 2]);
+}
+
 struct MySelector;
 
 #[derive(Debug, PartialEq, ExtractFrom)]

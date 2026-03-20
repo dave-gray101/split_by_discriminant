@@ -67,13 +67,7 @@ fn format_extractor_name(format: &str, enum_name: &Ident) -> syn::Result<(String
             }
 
             match inner.as_str() {
-                "enum" => out.push_str(&enum_name.to_string()),
-                "" => {
-                    return Err(syn::Error::new(
-                        enum_name.span(),
-                        "empty placeholder `{}` is not allowed; use `{enum}`",
-                    ))
-                }
+                "enum" | "" => out.push_str(&enum_name.to_string()),
                 "variant" => {
                     return Err(syn::Error::new(
                         enum_name.span(),
@@ -324,7 +318,7 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
     };
 
     if variants.is_empty() {
-        return syn::Error::new_spanned(enum_name, "Cannot derive ExtractFrom for an enum with no fields").to_compile_error();
+        return syn::Error::new_spanned(enum_name, format!("Cannot derive ExtractFrom for enum \"{}\" with no fields", enum_name)).to_compile_error();
     }
 
     let any_multi_field = variants.iter().any(|v| v.fields.len() != 1);
