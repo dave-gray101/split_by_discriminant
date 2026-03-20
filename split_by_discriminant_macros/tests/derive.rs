@@ -59,6 +59,8 @@ fn derive_extract_from_single_variant() {
     assert_eq!(ints, vec![&mut 4, &mut 5]);
 }
 
+struct CustomExtractor;
+
 #[derive(Debug, PartialEq, ExtractFrom)]
 #[extract_from(extractor = "CustomExtractor")]
 enum CustomName { A(i32) }
@@ -91,6 +93,8 @@ fn derive_extract_from_formatted_extractor_name() {
     assert_eq!(ints, vec![&mut 1, &mut 2]);
 }
 
+struct MySelector;
+
 #[derive(Debug, PartialEq, ExtractFrom)]
 enum PerVariantSelector {
     #[extract_from(selector = "MySelector")]
@@ -106,5 +110,21 @@ fn derive_extract_from_variant_selector_override() {
     let mut ex = SplitWithExtractor::new(split, PerVariantSelectorExtractor);
 
     let pairs: Vec<(&mut i32, &mut String)> = ex.extract_gat::<MySelector>(a_disc).unwrap();
+    assert_eq!(pairs.len(), 1);
+}
+
+#[derive(Debug, PartialEq, ExtractFrom)]
+#[extract_from(selector = "Custom{enum}{variant}")]
+enum GlobalSelectorFormat { A(i32, String) }
+
+#[test]
+fn derive_extract_from_global_selector_format() {
+    let mut data = [GlobalSelectorFormat::A(1, "x".into())];
+    let a_disc = discriminant(&GlobalSelectorFormat::A(0, "".into()));
+
+    let split = split_by_discriminant(&mut data, &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, GlobalSelectorFormatExtractor);
+
+    let pairs: Vec<(&mut i32, &mut String)> = ex.extract_gat::<CustomGlobalSelectorFormatA>(a_disc).unwrap();
     assert_eq!(pairs.len(), 1);
 }

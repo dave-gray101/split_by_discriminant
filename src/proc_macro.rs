@@ -38,16 +38,18 @@ fn parse_extract_from_attr(attrs: &[Attribute]) -> syn::Result<ExtractFromAttrs>
     Ok(out)
 }
 
-fn format_extractor_name(format: &str, enum_name: &Ident) -> syn::Result<String> {
+fn format_extractor_name(format: &str, enum_name: &Ident) -> syn::Result<(String, bool)> {
     // Support placeholder-based formatting in two styles:
     // 1) "Custom{}Extractor" (positional): `{}` is enum
     // 2) "Custom{enum}Extractor" (named)
     // Anything else is emitted verbatim.
     let mut out = String::new();
     let mut chars = format.chars().peekable();
+    let mut has_placeholder = false;
 
     while let Some(ch) = chars.next() {
         if ch == '{' {
+            has_placeholder = true;
             if let Some(&next) = chars.peek() {
                 if next == '}' {
                     chars.next();
@@ -90,14 +92,14 @@ fn format_extractor_name(format: &str, enum_name: &Ident) -> syn::Result<String>
         }
     }
 
-    Ok(out)
+    Ok((out, has_placeholder))
 }
 
 fn format_selector_name(
     format: &str,
     enum_name: &Ident,
     variant_name: &Ident,
-) -> syn::Result<String> {
+) -> syn::Result<(String, bool)> {
     // Support placeholder-based formatting in two styles:
     // 1) "Select{}{}" (positional): first `{}` is enum, second is variant
     // 2) "Select{enum}{variant}" (named)
@@ -106,11 +108,13 @@ fn format_selector_name(
     let mut out = String::new();
     let mut chars = format.chars().peekable();
     let mut positional_count = 0;
+    let mut has_placeholder = false;
 
     while let Some(ch) = chars.next() {
         if ch == '{' {
             if let Some(&next) = chars.peek() {
                 if next == '}' {
+                    has_placeholder = true;
                     // positional placeholder
                     chars.next();
                     positional_count += 1;
@@ -138,8 +142,14 @@ fn format_selector_name(
             }
 
             match inner.as_str() {
-                "enum" => out.push_str(&enum_name.to_string()),
-                "variant" => out.push_str(&variant_name.to_string()),
+                "enum" => {
+                    has_placeholder = true;
+                    out.push_str(&enum_name.to_string())
+                }
+                "variant" => {
+                    has_placeholder = true;
+                    out.push_str(&variant_name.to_string())
+                }
                 "" => {
                     return Err(syn::Error::new(
                         enum_name.span(),
@@ -158,7 +168,7 @@ fn format_selector_name(
         }
     }
 
-    Ok(out)
+    Ok((out, has_placeholder))
 }
 
 fn ident_from_string(span: proc_macro2::Span, s: &str) -> syn::Result<Ident> {
@@ -353,28 +363,35 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
         Strategy::Extract
     };
 
-    let extractor_name = match &attrs.extractor {
+    let (extractor_name, emit_extractor_struct) = match &attrs.extractor {
         Some(name) => match format_extractor_name(name, enum_name)
-            .and_then(|s| ident_from_string(enum_name.span(), &s))
+            .and_then(|(s, formatted)| {
+                let id = ident_from_string(enum_name.span(), &s)?;
+                Ok((id, formatted))
+            })
         {
-            Ok(id) => id,
+            Ok((id, formatted)) => (id, formatted),
             Err(err) => return err.to_compile_error(),
         },
-        None => format_ident!("{}Extractor", enum_name),
+        None => (format_ident!("{}Extractor", enum_name), true),
     };
 
-    let selector_idents: Vec<Ident> = match variants
+    let selector_info: Vec<(Ident, bool)> = match variants
         .iter()
         .map(|variant| {
-            let selector_str = if let Some(override_name) = &variant.selector_override {
-                override_name.clone()
+            let (selector_str, is_generated) = if let Some(override_name) = &variant.selector_override {
+                // Explicit selector name: assume shared and externally provided.
+                (override_name.clone(), false)
             } else if let Some(format) = &attrs.selector_format {
-                format_selector_name(format, enum_name, &variant.name)?
+                let (s, formatted) = format_selector_name(format, enum_name, &variant.name)?;
+                (s, formatted)
             } else {
-                format!("Select{}{}", enum_name, variant.name)
+                // Default naming scheme creates a generated selector type.
+                (format!("Select{}{}", enum_name, variant.name), true)
             };
 
-            ident_from_string(enum_name.span(), &selector_str)
+            let selector_ident = ident_from_string(enum_name.span(), &selector_str)?;
+            Ok((selector_ident, is_generated))
         })
         .collect::<Result<_, _>>()
     {
@@ -382,8 +399,10 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error(),
     };
 
-    let extractor_struct = quote! {
-        #vis struct #extractor_name;
+    let extractor_struct = if emit_extractor_struct {
+        quote! { #vis struct #extractor_name; }
+    } else {
+        quote! {}
     };
 
     let impls = match strategy {
@@ -428,14 +447,14 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
             quote! { #(#impls)* }
         }
         Strategy::Extract => {
-            let selector_defs = variants
+            let selector_defs = selector_info
                 .iter()
-                .zip(selector_idents.iter())
-                .map(|(_variant, selector)| quote! { #vis struct #selector; });
+                .filter(|(_, is_generated)| *is_generated)
+                .map(|(selector, _)| quote! { #vis struct #selector; });
 
             let impls = variants
                 .iter()
-                .zip(selector_idents.iter())
+                .zip(selector_info.iter().map(|(selector, _)| selector))
                 .map(|(variant, selector)| {
                     let variant_ident = &variant.name;
 

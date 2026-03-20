@@ -1,6 +1,6 @@
 [package]
 name = "split_by_discriminant_macros"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 authors = ["Dave Lee <dave@gray101.com>"]
 license = "MIT"
@@ -14,4 +14,4 @@ proc-macro = true
 syn = { version = "2.0.117", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
-split_by_discriminant = { path = "../", version = "0.5.1", features = ["proc_macro"] }
+split_by_discriminant = { path = "../", version = "0.5.2", features = ["proc_macro"] }
