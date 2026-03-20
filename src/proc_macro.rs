@@ -393,7 +393,7 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
             let selector_ident = ident_from_string(enum_name.span(), &selector_str)?;
             Ok((selector_ident, is_generated))
         })
-        .collect::<Result<_, _>>()
+        .collect::<syn::Result<Vec<(Ident, bool)>>>()
     {
         Ok(v) => v,
         Err(err) => return err.to_compile_error(),
