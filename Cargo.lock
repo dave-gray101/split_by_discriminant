@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "split_by_discriminant"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "indexmap",
  "proc-macro2",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "split_by_discriminant_macros"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "proc-macro2",
  "quote",

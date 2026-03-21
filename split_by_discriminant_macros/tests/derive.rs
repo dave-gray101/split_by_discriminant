@@ -144,3 +144,15 @@ fn derive_extract_from_global_selector_format() {
     let pairs: Vec<(&mut i32, &mut String)> = ex.extract_gat::<CustomGlobalSelectorFormatA>(a_disc).unwrap();
     assert_eq!(pairs.len(), 1);
 }
+
+#[derive(Debug, PartialEq, ExtractFrom)]
+#[extract_from(skip_empty)]
+enum EmptySkip {}
+
+#[test]
+fn derive_extract_from_skip_empty_flag() {
+    // Should compile and generate no impls/errors for empty enum.
+    // This is basically just here to force EmptySkip to not be optimized away.
+    let v: Vec<EmptySkip> = vec![];
+    assert!(v.is_empty());
+}

@@ -5,12 +5,14 @@ use syn::{parse2, Attribute, Data, DeriveInput, Fields, Ident, LitStr, Type};
 struct ExtractFromAttrs {
     extractor: Option<String>,
     selector_format: Option<String>,
+    skip_empty: bool,
 }
 
 fn parse_extract_from_attr(attrs: &[Attribute]) -> syn::Result<ExtractFromAttrs> {
     let mut out = ExtractFromAttrs {
         extractor: None,
         selector_format: None,
+        skip_empty: false,
     };
 
     for attr in attrs {
@@ -29,8 +31,12 @@ fn parse_extract_from_attr(attrs: &[Attribute]) -> syn::Result<ExtractFromAttrs>
                 let lit: LitStr = value.parse()?;
                 out.selector_format = Some(lit.value());
                 Ok(())
+            } else if meta.path.is_ident("skip_empty") {
+                out.skip_empty = true;
+                // No value accepted for this flag.
+                Ok(())
             } else {
-                Err(meta.error("unknown attribute key, expected `extractor` or `selector`"))
+                Err(meta.error("unknown attribute key, expected `extractor`, `selector`, or `skip_empty`"))
             }
         })?;
     }
@@ -225,6 +231,18 @@ fn ident_from_string(span: proc_macro2::Span, s: &str) -> syn::Result<Ident> {
 ///
 /// The default selector naming is `Select{Enum}{Variant}`.
 ///
+/// ## Skip empty enums
+///
+/// You can use the boolean flag `#[extract_from(skip_empty)]` when deriving on an
+/// empty enum to make the derive macro emit no code instead of raising a compile
+/// error about enums with no non-unit variants.
+///
+/// ```rust,ignore
+/// #[derive(ExtractFrom)]
+/// #[extract_from(skip_empty)]
+/// enum Empty {}
+/// ```
+///
 /// # Notes
 ///
 /// * The `extract_from` attribute is only enabled for this derive via
@@ -318,6 +336,9 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
     };
 
     if variants.is_empty() {
+        if attrs.skip_empty {
+            return quote! {};
+        }
         return syn::Error::new_spanned(enum_name, format!("Cannot derive ExtractFrom for enum \"{}\" with no fields", enum_name)).to_compile_error();
     }
 

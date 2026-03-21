@@ -399,6 +399,17 @@ enum E { A(i32, String) }
 
 (The default format is `Select{}{}`, with the first `{}` substituted by the enum name and the second by the variant name.)
 
+#### Empty enum support
+
+By default `#[derive(ExtractFrom)]` on an empty enum is an error, because no extraction behavior can be generated.
+You can override this with `skip_empty` to allow empty enums to compile as a no-op derive:
+
+```rust,ignore
+#[derive(ExtractFrom)]
+#[extract_from(skip_empty)]
+enum Empty {}
+```
+
 
 
 ## Supported inputs
