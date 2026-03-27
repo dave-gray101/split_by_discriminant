@@ -2,7 +2,49 @@
 
 `split_by_discriminant` is a lightweight Rust utility for partitioning a sequence of items by the discriminant of an `enum`.
 
-It provides two closely-related helpers:
+
+## Table of contents
+
+- [Quickstart](#quickstart)
+- [Core API](#core-api)
+- [Extractor strategies](#extractor-strategies)
+- [Feature flags](#feature-flags)
+- [Macros companion crate](#macros-companion-crate)
+- [Migration guide](#migration-guide)
+- [Troubleshooting](#troubleshooting)
+
+## Quickstart
+
+```rust
+use split_by_discriminant::{split_by_discriminant, SplitWithExtractor, VariantExtractFrom};
+use std::mem::discriminant;
+
+#[derive(Debug)]
+enum E { A(i32), B(String), C }
+
+struct EExtractor;
+impl VariantExtractFrom<E, i32> for EExtractor {
+    fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut i32> {
+        if let E::A(v) = t { Some(v) } else { None }
+    }
+}
+
+let mut data = vec![E::A(1), E::B("x".into()), E::A(2), E::C];
+let a_disc = discriminant(&E::A(0));
+
+let split = split_by_discriminant(&mut data, &[a_disc]);
+let mut extractor = SplitWithExtractor::new(split, EExtractor);
+let a_values: Vec<&mut i32> = extractor.extract(a_disc).unwrap();
+assert_eq!(a_values.len(), 2);
+```
+
+## Feature flags
+
+- `indexmap`: use `IndexMap`/`IndexSet` for deterministic key iteration order
+- `proc_macro`: enables macros re-exported from the library to the proc-macro crate
+
+## Core API
+
 
 * `split_by_discriminant` — the simple grouping operation.
 * `map_by_discriminant` — a more flexible variant that applies separate
@@ -327,7 +369,7 @@ assert_eq!(split.get(a_disc).unwrap(), &["match:A(1)".to_string()][..]);
 ```
 ## Proc Macros
 
-`split_by_discriminant_macros` provides a derive macro that can implement the above logic in most simple cases.
+`split_by_discriminant_macros` provides a derive macro and helpers for extractor generation. For full API details, configuration options, and examples, see `split_by_discriminant_macros/README.md`.
 
 ### Quickstart: `#[derive(ExtractFrom)]`
 

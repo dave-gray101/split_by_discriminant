@@ -1,5 +1,5 @@
 use split_by_discriminant::{split_by_discriminant, SplitWithExtractor};
-use split_by_discriminant_macros::ExtractFrom;
+use split_by_discriminant_macros::{ExtractFrom, make_extractor};
 use std::mem::discriminant;
 
 #[derive(Debug, PartialEq, ExtractFrom)]
@@ -156,3 +156,23 @@ fn derive_extract_from_skip_empty_flag() {
     let v: Vec<EmptySkip> = vec![];
     assert!(v.is_empty());
 }
+
+#[derive(Debug, PartialEq, ExtractFrom)]
+enum SingleMake { A(i32) }
+
+make_extractor! {
+    SingleMake,
+    extractor = SingleMakeExtractor,
+    fn_name = make_single_make_extractor
+}
+
+#[test]
+fn proc_macro_make_extractor_auto_names() {
+    let mut data = [SingleMake::A(3), SingleMake::A(7)];
+    let disc = discriminant(&SingleMake::A(0));
+
+    let mut ex = make_single_make_extractor(&mut data[..], &[disc]);
+    let ints: Vec<&mut i32> = ex.extract_simple(disc).unwrap();
+    assert_eq!(ints.len(), 2);
+}
+

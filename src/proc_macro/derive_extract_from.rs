@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse2, Attribute, Data, DeriveInput, Fields, Ident, LitStr, Type};
+use syn::{parse2, Data, DeriveInput, Fields, Ident, Type, LitStr, Attribute};
 
 struct ExtractFromAttrs {
     extractor: Option<String>,
@@ -43,140 +43,6 @@ fn parse_extract_from_attr(attrs: &[Attribute]) -> syn::Result<ExtractFromAttrs>
 
     Ok(out)
 }
-
-fn format_extractor_name(format: &str, enum_name: &Ident) -> syn::Result<(String, bool)> {
-    // Support placeholder-based formatting in two styles:
-    // 1) "Custom{}Extractor" (positional): `{}` is enum
-    // 2) "Custom{enum}Extractor" (named)
-    // Anything else is emitted verbatim.
-    let mut out = String::new();
-    let mut chars = format.chars().peekable();
-    let mut has_placeholder = false;
-
-    while let Some(ch) = chars.next() {
-        if ch == '{' {
-            has_placeholder = true;
-            if let Some(&next) = chars.peek() {
-                if next == '}' {
-                    chars.next();
-                    out.push_str(&enum_name.to_string());
-                    continue;
-                }
-            }
-
-            let mut inner = String::new();
-            while let Some(next) = chars.next() {
-                if next == '}' {
-                    break;
-                }
-                inner.push(next);
-            }
-
-            match inner.as_str() {
-                "enum" | "" => out.push_str(&enum_name.to_string()),
-                "variant" => {
-                    return Err(syn::Error::new(
-                        enum_name.span(),
-                        "`{variant}` placeholder is not supported for extractor names",
-                    ))
-                }
-                _ => {
-                    return Err(syn::Error::new(
-                        enum_name.span(),
-                        "unknown placeholder; expected `{enum}`",
-                    ))
-                }
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-
-    Ok((out, has_placeholder))
-}
-
-fn format_selector_name(
-    format: &str,
-    enum_name: &Ident,
-    variant_name: &Ident,
-) -> syn::Result<(String, bool)> {
-    // Support placeholder-based formatting in two styles:
-    // 1) "Select{}{}" (positional): first `{}` is enum, second is variant
-    // 2) "Select{enum}{variant}" (named)
-    // Anything else is emitted verbatim.
-
-    let mut out = String::new();
-    let mut chars = format.chars().peekable();
-    let mut positional_count = 0;
-    let mut has_placeholder = false;
-
-    while let Some(ch) = chars.next() {
-        if ch == '{' {
-            if let Some(&next) = chars.peek() {
-                if next == '}' {
-                    has_placeholder = true;
-                    // positional placeholder
-                    chars.next();
-                    positional_count += 1;
-                    match positional_count {
-                        1 => out.push_str(&enum_name.to_string()),
-                        2 => out.push_str(&variant_name.to_string()),
-                        _ => {
-                            return Err(syn::Error::new(
-                                enum_name.span(),
-                                "too many positional placeholders; expected at most 2",
-                            ))
-                        }
-                    }
-                    continue;
-                }
-            }
-
-            // named placeholder
-            let mut inner = String::new();
-            while let Some(next) = chars.next() {
-                if next == '}' {
-                    break;
-                }
-                inner.push(next);
-            }
-
-            match inner.as_str() {
-                "enum" => {
-                    has_placeholder = true;
-                    out.push_str(&enum_name.to_string())
-                }
-                "variant" => {
-                    has_placeholder = true;
-                    out.push_str(&variant_name.to_string())
-                }
-                "" => {
-                    return Err(syn::Error::new(
-                        enum_name.span(),
-                        "empty placeholder `{}` is not allowed; use `{enum}` or `{variant}`",
-                    ))
-                }
-                _ => {
-                    return Err(syn::Error::new(
-                        enum_name.span(),
-                        "unknown placeholder; expected `{enum}` or `{variant}`",
-                    ))
-                }
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-
-    Ok((out, has_placeholder))
-}
-
-fn ident_from_string(span: proc_macro2::Span, s: &str) -> syn::Result<Ident> {
-    syn::parse_str::<Ident>(s).map_err(|e| syn::Error::new(span, e))
-}
-
-
-
 
 /// Derive helper for `#[derive(ExtractFrom)]`.
 ///
@@ -535,3 +401,136 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
         #impls
     }
 }
+
+fn ident_from_string(span: proc_macro2::Span, s: &str) -> syn::Result<Ident> {
+    syn::parse_str::<Ident>(s).map_err(|e| syn::Error::new(span, e))
+}
+
+fn format_extractor_name(format: &str, enum_name: &Ident) -> syn::Result<(String, bool)> {
+    // Support placeholder-based formatting in two styles:
+    // 1) "Custom{}Extractor" (positional): `{}` is enum
+    // 2) "Custom{enum}Extractor" (named)
+    // Anything else is emitted verbatim.
+    let mut out = String::new();
+    let mut chars = format.chars().peekable();
+    let mut has_placeholder = false;
+
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            has_placeholder = true;
+            if let Some(&next) = chars.peek() {
+                if next == '}' {
+                    chars.next();
+                    out.push_str(&enum_name.to_string());
+                    continue;
+                }
+            }
+
+            let mut inner = String::new();
+            while let Some(next) = chars.next() {
+                if next == '}' {
+                    break;
+                }
+                inner.push(next);
+            }
+
+            match inner.as_str() {
+                "enum" | "" => out.push_str(&enum_name.to_string()),
+                "variant" => {
+                    return Err(syn::Error::new(
+                        enum_name.span(),
+                        "`{variant}` placeholder is not supported for extractor names",
+                    ))
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        enum_name.span(),
+                        "unknown placeholder; expected `{enum}`",
+                    ))
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+
+    Ok((out, has_placeholder))
+}
+
+
+fn format_selector_name(
+    format: &str,
+    enum_name: &Ident,
+    variant_name: &Ident,
+) -> syn::Result<(String, bool)> {
+    // Support placeholder-based formatting in two styles:
+    // 1) "Select{}{}" (positional): first `{}` is enum, second is variant
+    // 2) "Select{enum}{variant}" (named)
+    // Anything else is emitted verbatim.
+
+    let mut out = String::new();
+    let mut chars = format.chars().peekable();
+    let mut positional_count = 0;
+    let mut has_placeholder = false;
+
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            if let Some(&next) = chars.peek() {
+                if next == '}' {
+                    has_placeholder = true;
+                    // positional placeholder
+                    chars.next();
+                    positional_count += 1;
+                    match positional_count {
+                        1 => out.push_str(&enum_name.to_string()),
+                        2 => out.push_str(&variant_name.to_string()),
+                        _ => {
+                            return Err(syn::Error::new(
+                                enum_name.span(),
+                                "too many positional placeholders; expected at most 2",
+                            ))
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            // named placeholder
+            let mut inner = String::new();
+            while let Some(next) = chars.next() {
+                if next == '}' {
+                    break;
+                }
+                inner.push(next);
+            }
+
+            match inner.as_str() {
+                "enum" => {
+                    has_placeholder = true;
+                    out.push_str(&enum_name.to_string())
+                }
+                "variant" => {
+                    has_placeholder = true;
+                    out.push_str(&variant_name.to_string())
+                }
+                "" => {
+                    return Err(syn::Error::new(
+                        enum_name.span(),
+                        "empty placeholder `{}` is not allowed; use `{enum}` or `{variant}`",
+                    ))
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        enum_name.span(),
+                        "unknown placeholder; expected `{enum}` or `{variant}`",
+                    ))
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+
+    Ok((out, has_placeholder))
+}
+
