@@ -5,43 +5,12 @@
 
 ## Table of contents
 
-- [Quickstart](#quickstart)
 - [Core API](#core-api)
-- [Extractor strategies](#extractor-strategies)
 - [Feature flags](#feature-flags)
 - [Macros companion crate](#macros-companion-crate)
 - [Migration guide](#migration-guide)
+- [Extractor strategies](#extractor-strategies)
 - [Troubleshooting](#troubleshooting)
-
-## Quickstart
-
-```rust
-use split_by_discriminant::{split_by_discriminant, SplitWithExtractor, VariantExtractFrom};
-use std::mem::discriminant;
-
-#[derive(Debug)]
-enum E { A(i32), B(String), C }
-
-struct EExtractor;
-impl VariantExtractFrom<E, i32> for EExtractor {
-    fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut i32> {
-        if let E::A(v) = t { Some(v) } else { None }
-    }
-}
-
-let mut data = vec![E::A(1), E::B("x".into()), E::A(2), E::C];
-let a_disc = discriminant(&E::A(0));
-
-let split = split_by_discriminant(&mut data, &[a_disc]);
-let mut extractor = SplitWithExtractor::new(split, EExtractor);
-let a_values: Vec<&mut i32> = extractor.extract(a_disc).unwrap();
-assert_eq!(a_values.len(), 2);
-```
-
-## Feature flags
-
-- `indexmap`: use `IndexMap`/`IndexSet` for deterministic key iteration order
-- `proc_macro`: enables macros re-exported from the library to the proc-macro crate
 
 ## Core API
 
@@ -53,6 +22,12 @@ assert_eq!(a_values.len(), 2);
 
 Both are useful when you need to gather all values of a particular variant,
 operate on them, and then return them to the original collection.
+
+## Feature flags
+
+- `indexmap`: use `IndexMap`/`IndexSet` for deterministic key iteration order
+- `proc_macro`: enables macros re-exported from the library to the proc-macro crate
+
 
 ## Reborrow vs. move semantics
 

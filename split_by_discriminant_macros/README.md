@@ -93,7 +93,14 @@ extract_from! {
 
 ## `make_extractor!` macro
 
-`make_extractor!(Name, BaseExtractor)` wraps an existing extractor type with a new type name, useful for re-exporting or adapting API boundaries.
+`make_extractor!` generates a helper function and ties it to an extractor type.
+
+Parameters:
+
+- First argument: group name (required). Used in documentation, and for defaults below.
+- `extractor = <ExtractorType>`: extractor type name (default: `<GroupName>Extractor`)
+- `fn_name = <function_name>` / `fn = <function_name>` / `function = <function_name>`: generated helper function name (default: `make_<GroupName>_extractor`)
+- `trait = <TraitName>` / `trait_name = <TraitName>`: optional extra trait bound for the generated function signature
 
 Example:
 
@@ -105,7 +112,7 @@ impl split_by_discriminant::VariantExtractFrom<E, i32> for MyExtractor {
     fn extract_from<'a>(&self, item: &'a mut E) -> Option<&'a mut i32> { /* ... */ }
 }
 
-make_extractor!(MyExtractorWrapper, MyExtractor);
+make_extractor!(E, extractor = MyExtractor, fn_name = make_my_extractor, trait = MyTrait);
 ```
 
 ## Notes

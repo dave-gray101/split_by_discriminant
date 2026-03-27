@@ -50,7 +50,7 @@ dependencies = [
 
 [[package]]
 name = "split_by_discriminant"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "heck",
  "indexmap",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "split_by_discriminant_macros"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "proc-macro2",
  "quote",

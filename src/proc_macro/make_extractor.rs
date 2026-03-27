@@ -4,7 +4,7 @@ use syn::Ident;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 
 struct MakeExtractorArgs {
-    enum_name: Ident,
+    group_name: Ident,
     extractor_name: Option<Ident>,
     function_name: Option<Ident>,
     trait_name: Option<Ident>,
@@ -12,7 +12,7 @@ struct MakeExtractorArgs {
 
 impl syn::parse::Parse for MakeExtractorArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let enum_name: Ident = input.parse()?;
+        let group_name: Ident = input.parse()?;
         let mut extractor_name = None;
         let mut function_name = None;
         let mut trait_name = None;
@@ -45,7 +45,7 @@ impl syn::parse::Parse for MakeExtractorArgs {
         }
 
         Ok(MakeExtractorArgs {
-            enum_name,
+            group_name,
             extractor_name,
             function_name,
             trait_name,
@@ -60,15 +60,15 @@ pub fn fn_make_extractor(input: TokenStream) -> TokenStream {
         Err(err) => return err.to_compile_error(),
     };
 
-    let enum_name = &args.enum_name;
-    let enum_name_string = enum_name.to_string();
+    let group_name = &args.group_name;
+    let group_name_string = group_name.to_string();
 
     let extractor_name = args.extractor_name.unwrap_or_else(|| {
-        format_ident!("{}Extractor", enum_name_string.to_upper_camel_case())
+        format_ident!("{}Extractor", group_name_string.to_upper_camel_case())
     });
 
     let function_name = args.function_name.unwrap_or_else(|| {
-        format_ident!("make_{}_extractor", enum_name_string.to_snake_case())
+        format_ident!("make_{}_extractor", group_name_string.to_snake_case())
     });
 
     let t_trait_bound = if let Some(trait_name) = &args.trait_name {
@@ -78,9 +78,9 @@ pub fn fn_make_extractor(input: TokenStream) -> TokenStream {
     };
 
     let doc1 = format!(
-        "Create a [`SplitWithExtractor`] for `{enum}` values using extractor [`{extractor}`].",
+        "Create a [`SplitWithExtractor`] for `{group}` values using extractor [`{extractor}`].",
         extractor = extractor_name,
-        enum = enum_name,
+        group = group_name,
     );
 
     let trait_docs = if let Some(trait_name) = &args.trait_name {
