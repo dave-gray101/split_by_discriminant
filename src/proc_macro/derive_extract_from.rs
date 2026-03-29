@@ -459,11 +459,7 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
 /// this form receives the full `enum` definition as input and re-emits it
 /// alongside the generated extractor struct and trait impls.
 pub fn fn_extract_from(input: TokenStream) -> TokenStream {
-    let impls = derive_extract_from(input.clone());
-    quote! {
-        #input
-        #impls
-    }
+    derive_extract_from(input.clone())
 }
 
 fn ident_from_string(span: proc_macro2::Span, s: &str) -> syn::Result<Ident> {
