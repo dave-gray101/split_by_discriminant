@@ -26,6 +26,4 @@ default = []
 indexmap = ["dep:indexmap"]
 proc_macro = ["dep:syn", "dep:quote", "dep:proc-macro2"]
 
-[lints]
-workspace = true
 
