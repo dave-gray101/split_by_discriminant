@@ -8,6 +8,7 @@ struct MakeExtractorArgs {
     extractor_name: Option<Ident>,
     function_name: Option<Ident>,
     trait_name: Option<Ident>,
+    ref_fn_name: Option<Ident>,
 }
 
 impl syn::parse::Parse for MakeExtractorArgs {
@@ -16,6 +17,7 @@ impl syn::parse::Parse for MakeExtractorArgs {
         let mut extractor_name = None;
         let mut function_name = None;
         let mut trait_name = None;
+        let mut ref_fn_name = None;
 
         if input.peek(syn::Token![,]) {
             input.parse::<syn::Token![,]>()?;
@@ -28,10 +30,11 @@ impl syn::parse::Parse for MakeExtractorArgs {
 
             match key.to_string().as_str() {
                 "extractor" => extractor_name = Some(value),
-                "fn_name" | "fn" | "function" => function_name = Some(value),
-                "trait" | "trait_name" => trait_name = Some(value),
+                "fn_name" | "function" => function_name = Some(value),
+                "trait_name" => trait_name = Some(value),
+                "ref_fn_name" | "ref_function" => ref_fn_name = Some(value),
                 _ => {
-                    let msg = format!("unexpected key: `{key}`. Expected `extractor`, `fn_name`/`fn`/`function`, or `trait`/`trait_name`.");
+                    let msg = format!("unexpected key: `{key}`. Expected `extractor`, `fn_name`/`function`, `trait_name`, or `ref_fn_name`/`ref_function`.");
                     return Err(syn::Error::new_spanned(
                         key,
                         msg),
@@ -49,6 +52,7 @@ impl syn::parse::Parse for MakeExtractorArgs {
             extractor_name,
             function_name,
             trait_name,
+            ref_fn_name,
         })
     }
 }
@@ -96,6 +100,36 @@ pub fn fn_make_extractor(input: TokenStream) -> TokenStream {
 
     let doc3 = "See https://docs.rs/split_by_discriminant/latest/split_by_discriminant/ for full API docs.";
 
+    let ref_fn = if let Some(ref_fn_name) = &args.ref_fn_name {
+        let ref_doc1 = format!(
+            "Create a read-only [`SplitWithExtractor`] for `{group}` values using extractor [`{extractor}`].",
+            extractor = extractor_name,
+            group = group_name,
+        );
+        let ref_doc2 = format!(
+            "Like [`{fn_name}`], but requires only `R: Borrow<T>` — suitable for non-mutable input iterators such as shared slices. \
+             Only `as_ref_*` methods are available on the returned map.",
+            fn_name = function_name,
+        );
+        let ref_doc3 = "See https://docs.rs/split_by_discriminant/latest/split_by_discriminant/ for full API docs.";
+        quote! {
+            #[doc = #ref_doc1]
+            #[doc = #ref_doc2]
+            #[doc = #ref_doc3]
+            pub fn #ref_fn_name<T, I, R>(items: I, discs: &[std::mem::Discriminant<T>]) -> split_by_discriminant::SplitWithExtractor<T, R, R, #extractor_name>
+            where
+                #t_trait_bound
+                I: IntoIterator<Item = R>,
+                R: std::borrow::Borrow<T>,
+            {
+                let split = split_by_discriminant::split_by_discriminant(items, discs);
+                split_by_discriminant::SplitWithExtractor::new(split, #extractor_name)
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         #[doc = #doc1]
         #[doc = #doc2]
@@ -109,6 +143,7 @@ pub fn fn_make_extractor(input: TokenStream) -> TokenStream {
             let split = split_by_discriminant::split_by_discriminant(items, discs);
             split_by_discriminant::SplitWithExtractor::new(split, #extractor_name)
         }
+        #ref_fn
     }
     .into()
 }

@@ -304,8 +304,17 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
                             None
                         }
                     }
-                }
-            }
+                }                impl #impl_generics split_by_discriminant::SimpleReadFrom<#enum_name #ty_generics> for #extractor_name #where_clause {
+                    type Output = #field_type;
+
+                    fn read_from<'a>(&self, t: &'a #enum_name #ty_generics) -> Option<&'a Self::Output> {
+                        if let #enum_name::#variant_ident(ref #field_bind) = *t {
+                            Some(#field_bind)
+                        } else {
+                            None
+                        }
+                    }
+                }            }
         }
         Strategy::Variant => {
             let impls = variants.iter().map(|variant| {
@@ -317,6 +326,15 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
                     impl #impl_generics split_by_discriminant::VariantExtractFrom<#enum_name #ty_generics, #field_type> for #extractor_name #where_clause {
                         fn extract_from<'a>(&self, t: &'a mut #enum_name #ty_generics) -> Option<&'a mut #field_type> {
                             if let #enum_name::#variant_ident(ref mut #field_bind) = *t {
+                                Some(#field_bind)
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                    impl #impl_generics split_by_discriminant::VariantReadFrom<#enum_name #ty_generics, #field_type> for #extractor_name #where_clause {
+                        fn read_from<'a>(&self, t: &'a #enum_name #ty_generics) -> Option<&'a #field_type> {
+                            if let #enum_name::#variant_ident(ref #field_bind) = *t {
                                 Some(#field_bind)
                             } else {
                                 None
@@ -374,12 +392,45 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
                     quote! { ( #(ref mut #binds),* ) }
                 };
 
+                let output_type_ref = if variant.fields.len() == 1 {
+                    let ty = &variant.fields[0].ty;
+                    quote! { &'a #ty }
+                } else {
+                    let tys = variant.fields.iter().map(|f| {
+                        let ty = &f.ty;
+                        quote! { &'a #ty }
+                    });
+                    quote! { ( #(#tys),* ) }
+                };
+
+                let pattern_ref = if variant.is_named {
+                    let field_bindings = variant.fields.iter().map(|f| {
+                        let name = f.name.as_ref().unwrap();
+                        quote! { #name: ref #name }
+                    });
+                    quote! { { #(#field_bindings),* } }
+                } else {
+                    let binds = field_binds.iter();
+                    quote! { ( #(ref #binds),* ) }
+                };
+
                 quote! {
                     impl #impl_generics split_by_discriminant::ExtractFrom<#enum_name #ty_generics, #selector> for #extractor_name #where_clause {
                         type Output<'a> = #output_type where #enum_name #ty_generics: 'a;
 
                         fn extract_from<'a>(&self, t: &'a mut #enum_name #ty_generics) -> Option<Self::Output<'a>> {
                             if let #enum_name::#variant_ident #pattern = *t {
+                                Some(#output_expr)
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                    impl #impl_generics split_by_discriminant::ReadFrom<#enum_name #ty_generics, #selector> for #extractor_name #where_clause {
+                        type Output<'a> = #output_type_ref where #enum_name #ty_generics: 'a;
+
+                        fn read_from<'a>(&self, t: &'a #enum_name #ty_generics) -> Option<Self::Output<'a>> {
+                            if let #enum_name::#variant_ident #pattern_ref = *t {
                                 Some(#output_expr)
                             } else {
                                 None
@@ -398,6 +449,19 @@ pub fn derive_extract_from(input: TokenStream) -> TokenStream {
 
     quote! {
         #extractor_struct
+        #impls
+    }
+}
+
+/// Function-like macro entry point for [`extract_from!`].
+///
+/// Unlike the derive form (which relies on the enum already being in scope),
+/// this form receives the full `enum` definition as input and re-emits it
+/// alongside the generated extractor struct and trait impls.
+pub fn fn_extract_from(input: TokenStream) -> TokenStream {
+    let impls = derive_extract_from(input.clone());
+    quote! {
+        #input
         #impls
     }
 }

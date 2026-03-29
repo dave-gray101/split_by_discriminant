@@ -200,7 +200,7 @@ fn into_iter_preserves_order_across_multiple_calls() {
     let second_pass: Vec<i32> = (&mut split)
         .into_iter()
         .flat_map(|(_disc, items)| {
-            items.iter_mut().filter_map(|e| {
+            items.into_iter().filter_map(|e| {
                 if let E::A(v) = e {
                     *v += 10;
                     Some(*v)

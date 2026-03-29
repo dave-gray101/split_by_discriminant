@@ -306,3 +306,691 @@ fn get_returns_slice_of_group() {
     // Also verify get returns None for non-existent discriminant
     assert!(split.get(discriminant(&E::B(String::new()))).is_none());
 }
+
+// ── get_multiple tests ─────────────────────────────────────────────────────────
+
+#[test]
+fn get_multiple_retrieves_multiple_groups() {
+    // Test that get_multiple returns all requested discriminants that are present
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::B("bye".into())];
+    let split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    let result = split.get_multiple(&[a_disc, b_disc]);
+    
+    // Both discriminants should be present
+    assert_eq!(result.len(), 2);
+    assert!(result.contains_key(&a_disc));
+    assert!(result.contains_key(&b_disc));
+    
+    // Verify the contents
+    assert_eq!(result.get(&a_disc).unwrap().len(), 2);
+    assert_eq!(result.get(&b_disc).unwrap().len(), 2);
+}
+
+#[test]
+fn get_multiple_partial_match() {
+    // Test that get_multiple only returns discriminants that exist in the split
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+    let c_disc = discriminant(&E::C);
+
+    let mut data = [E::A(1), E::B("hi".into()), E::C];
+    let split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    // Request A, B, and C even though only A and B were split on
+    let result = split.get_multiple(&[a_disc, b_disc, c_disc]);
+    
+    // Only A and B should be present
+    assert_eq!(result.len(), 2);
+    assert!(result.contains_key(&a_disc));
+    assert!(result.contains_key(&b_disc));
+    assert!(!result.contains_key(&c_disc));
+}
+
+#[test]
+fn get_multiple_empty_ids() {
+    // Test that get_multiple returns an empty map when given an empty ids slice
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let result = split.get_multiple(&[]);
+    assert_eq!(result.len(), 0);
+}
+
+#[test]
+fn get_multiple_with_duplicates_in_ids() {
+    // Test that duplicate discriminants in the ids slice are handled correctly
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    // Request with duplicates: [A, B, A, A] — should return A and B only once
+    let result = split.get_multiple(&[a_disc, b_disc, a_disc, a_disc]);
+    
+    assert_eq!(result.len(), 2);
+    assert_eq!(result.get(&a_disc).unwrap().len(), 2);
+    assert_eq!(result.get(&b_disc).unwrap().len(), 1);
+}
+
+#[test]
+fn get_multiple_returns_correct_references() {
+    // Test that get_multiple returns references with the correct lifetime
+    // (tied to the split's borrow, not to the input ids slice)
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::A(2), E::B("hi".into())];
+    let split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    {
+        let ids = [a_disc, b_disc];  // Create a temporary ids array
+        let result = split.get_multiple(&ids);
+        
+        // result is now tied to split's borrow, not ids
+        assert_eq!(result.len(), 2);
+    }  // ids goes out of scope here
+
+    // The fact that we can still query means the references are correct
+    let result2 = split.get_multiple(&[a_disc]);
+    assert_eq!(result2.len(), 1);
+}
+
+#[test]
+fn get_multiple_single_element() {
+    // Test get_multiple with just one discriminant in the ids slice
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let result = split.get_multiple(&[a_disc]);
+    
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(&a_disc).unwrap().len(), 2);
+}
+
+// ── for_each_group_mut tests ─────────────────────────────────────────────────
+
+#[test]
+fn for_each_group_mut_retrieves_and_allows_mutation() {
+    // Test that for_each_group_mut visits all requested groups and allows mutation
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::B("bye".into())];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    let mut a_seen = false;
+    let mut b_seen = false;
+    split.for_each_group_mut(&[a_disc, b_disc], |disc, mut group| {
+        if disc == a_disc {
+            a_seen = true;
+            for item in group.iter_mut() {
+                if let E::A(v) = item { *v += 10; }
+            }
+        } else if disc == b_disc {
+            b_seen = true;
+        }
+    });
+
+    // Both discriminants should have been visited
+    assert!(a_seen);
+    assert!(b_seen);
+
+    // Verify the mutations persisted
+    assert_eq!(*split.get(a_disc).unwrap()[0], E::A(11));
+    assert_eq!(*split.get(a_disc).unwrap()[1], E::A(12));
+}
+
+#[test]
+fn for_each_group_mut_partial_match() {
+    // Test that for_each_group_mut only visits discriminants present in the split
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+    let c_disc = discriminant(&E::C);
+
+    let mut data = [E::A(5), E::B("test".into())];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    let mut seen = std::collections::HashSet::new();
+    // Request A, B, and C — only A and B should be visited
+    split.for_each_group_mut(&[a_disc, b_disc, c_disc], |disc, _| {
+        seen.insert(disc);
+    });
+
+    assert_eq!(seen.len(), 2);
+    assert!(seen.contains(&a_disc));
+    assert!(seen.contains(&b_disc));
+    assert!(!seen.contains(&c_disc));
+}
+
+#[test]
+fn for_each_group_mut_empty_ids() {
+    // Test that for_each_group_mut with an empty slice visits no groups
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let mut count = 0usize;
+    split.for_each_group_mut(&[], |_, _| { count += 1; });
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn for_each_group_mut_with_duplicates() {
+    // Test that duplicate discriminants in ids are deduplicated
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(10), E::B("x".into()), E::A(20)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    let mut groups_visited = 0usize;
+    let mut a_len = 0usize;
+    split.for_each_group_mut(&[a_disc, b_disc, a_disc], |disc, group| {
+        groups_visited += 1;
+        if disc == a_disc { a_len = group.len(); }
+    });
+
+    // Deduplicated: A and B each visited once
+    assert_eq!(groups_visited, 2);
+    assert_eq!(a_len, 2);
+}
+
+#[test]
+fn for_each_group_mut_string_mutation() {
+    // Test mutating String elements through for_each_group_mut
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hello".into()), E::B("world".into())];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    split.for_each_group_mut(&[b_disc], |_, mut group| {
+        for item in group.iter_mut() {
+            if let E::B(s) = item { s.push('!'); }
+        }
+    });
+
+    // Verify mutations
+    let b_items = split.get(b_disc).unwrap();
+    assert!(matches!(&b_items[0], E::B(s) if s == "hello!"));
+    assert!(matches!(&b_items[1], E::B(s) if s == "world!"));
+}
+
+#[test]
+fn for_each_group_mut_callback_lifetime() {
+    // Test that the callback borrows split for exactly the duration of each call
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let mut count = 0usize;
+    {
+        let ids = [a_disc];
+        split.for_each_group_mut(&ids, |_, group| { count = group.len(); });
+    } // ids goes out of scope here
+
+    // count captured the group length; split is still usable
+    assert_eq!(count, 2);
+    let mut count2 = 0usize;
+    split.for_each_group_mut(&[a_disc], |_, group| { count2 = group.len(); });
+    assert_eq!(count2, 2);
+}
+
+// ── GroupMut direct-method tests ──────────────────────────────────────────────
+
+#[test]
+fn group_mut_len_and_is_empty() {
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::A(2), E::A(3)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    let group = split.get_mut(a_disc).unwrap();
+    assert_eq!(group.len(), 3);
+    assert!(!group.is_empty());
+
+    // b_disc was requested but no items matched — group is absent entirely
+    assert!(split.get_mut(b_disc).is_none());
+}
+
+#[test]
+fn group_mut_as_slice_and_index() {
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(10), E::A(20)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let group = split.get_mut(a_disc).unwrap();
+
+    // as_slice() gives a shared view
+    let slice = group.as_slice();
+    assert_eq!(slice.len(), 2);
+
+    // Index gives the same element without IndexMut
+    assert!(matches!(group[0], E::A(10)));
+    assert!(matches!(group[1], E::A(20)));
+}
+
+#[test]
+fn group_mut_shared_ref_into_iterator() {
+    // for item in &group should iterate shared refs without consuming the GroupMut
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2), E::A(3)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let group = split.get_mut(a_disc).unwrap();
+
+    let vals: Vec<i32> = (&group)
+        .into_iter()
+        .filter_map(|e| if let E::A(v) = e { Some(*v) } else { None })
+        .collect();
+    assert_eq!(vals, vec![1, 2, 3]);
+
+    // group is still usable after shared ref iteration
+    assert_eq!(group.len(), 3);
+}
+
+#[test]
+fn group_mut_sort_by_and_reverse() {
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(3), E::A(1), E::A(2)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    {
+        let mut group = split.get_mut(a_disc).unwrap();
+
+        // sort_by: ascending by value
+        group.sort_by(|a, b| {
+            let E::A(va) = a else { unreachable!() };
+            let E::A(vb) = b else { unreachable!() };
+            va.cmp(vb)
+        });
+
+        let sorted: Vec<i32> = group.iter()
+            .filter_map(|e| if let E::A(v) = e { Some(*v) } else { None })
+            .collect();
+        assert_eq!(sorted, vec![1, 2, 3]);
+
+        // reverse in place
+        group.reverse();
+    }
+
+    let after: Vec<i32> = split.get(a_disc).unwrap().iter()
+        .filter_map(|e| if let E::A(v) = e { Some(*v) } else { None })
+        .collect();
+    assert_eq!(after, vec![3, 2, 1]);
+}
+
+#[test]
+fn group_mut_sort_unstable_by() {
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(5), E::A(2), E::A(8), E::A(1)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    {
+        let mut group = split.get_mut(a_disc).unwrap();
+        group.sort_unstable_by(|a, b| {
+            let E::A(va) = a else { unreachable!() };
+            let E::A(vb) = b else { unreachable!() };
+            va.cmp(vb)
+        });
+    }
+
+    let sorted: Vec<i32> = split.get(a_disc).unwrap().iter()
+        .filter_map(|e| if let E::A(v) = e { Some(*v) } else { None })
+        .collect();
+    assert_eq!(sorted, vec![1, 2, 5, 8]);
+}
+
+// ── remove_multiple tests ─────────────────────────────────────────────────────
+
+#[test]
+fn remove_multiple_claims_ownership_of_groups() {
+    // Test that remove_multiple returns owned groups for the requested discriminants
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::B("bye".into())];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    let removed = split.remove_multiple(&[a_disc, b_disc]);
+
+    // Removed should contain both groups
+    assert_eq!(removed.len(), 2);
+    assert_eq!(removed.get(&a_disc).unwrap().len(), 2);
+    assert_eq!(removed.get(&b_disc).unwrap().len(), 2);
+
+    // Original split should now have empty maps for these discriminants
+    assert!(split.get(a_disc).is_none());
+    assert!(split.get(b_disc).is_none());
+}
+
+#[test]
+fn remove_multiple_partial_match() {
+    // Test that remove_multiple only removes discriminants that exist
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+    let c_disc = discriminant(&E::C);
+
+    let mut data = [E::A(1), E::B("hi".into()), E::C];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    // Request removal of A, B, and C even though C was never split on
+    let removed = split.remove_multiple(&[a_disc, b_disc, c_disc]);
+
+    // Only A and B should be in the result
+    assert_eq!(removed.len(), 2);
+    assert!(removed.contains_key(&a_disc));
+    assert!(removed.contains_key(&b_disc));
+    assert!(!removed.contains_key(&c_disc));
+}
+
+#[test]
+fn remove_multiple_empty_ids() {
+    // Test that remove_multiple with empty ids returns an empty map
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let removed = split.remove_multiple(&[]);
+    assert_eq!(removed.len(), 0);
+
+    // Original split should still have the group
+    assert_eq!(split.get(a_disc).unwrap().len(), 2);
+}
+
+#[test]
+fn remove_multiple_with_duplicates() {
+    // Test that duplicate ids in the slice are handled correctly
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    // Request removal twice with duplicate
+    let removed = split.remove_multiple(&[a_disc, a_disc]);
+
+    // Should only have one entry (duplicates collapse)
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed.get(&a_disc).unwrap().len(), 2);
+}
+
+// ── remove_multiple_mapped tests ──────────────────────────────────────────────
+
+#[test]
+fn remove_multiple_mapped_transforms_all_groups() {
+    // Test that remove_multiple_mapped removes and transforms each group
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::B("bye".into())];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    // Transform to lengths
+    let transformed = split.remove_multiple_mapped(&[a_disc, b_disc], |e| match e {
+        E::A(v) => *v as usize,
+        E::B(s) => s.len(),
+        E::C => 0,
+    });
+
+    assert_eq!(transformed.get(&a_disc).unwrap(), &[1usize, 2usize]);
+    assert_eq!(transformed.get(&b_disc).unwrap(), &[2usize, 3usize]); // "hi" and "bye"
+}
+
+#[test]
+fn remove_multiple_mapped_partial_match() {
+    // Test that only present discriminants are transformed
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(5), E::A(10)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    // Request transformation for A and B, but only A exists
+    let transformed = split.remove_multiple_mapped(&[a_disc, b_disc], |e| match e {
+        E::A(v) => *v * 2,
+        _ => 0,
+    });
+
+    assert_eq!(transformed.len(), 1);
+    assert_eq!(transformed.get(&a_disc).unwrap(), &[10, 20]);
+    assert!(!transformed.contains_key(&b_disc));
+}
+
+// ── remove_multiple_with tests ────────────────────────────────────────────────
+
+#[test]
+fn remove_multiple_with_filters_and_transforms() {
+    // Test that remove_multiple_with filters (Some/None) and transforms each group
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::B("bye".into())];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    // Filter: A values > 1, B strings longer than 2 chars
+    let filtered = split.remove_multiple_with(&[a_disc, b_disc], |e| match e {
+        E::A(v) if *v > 1 => Some(*v as usize),
+        E::B(s) if s.len() > 2 => Some(s.len()),
+        _ => None,
+    });
+
+    assert_eq!(filtered.get(&a_disc).unwrap(), &[2usize]);  // only 2 > 1
+    assert_eq!(filtered.get(&b_disc).unwrap(), &[3usize]); // only "bye" > 2 chars
+}
+
+#[test]
+fn remove_multiple_with_all_filtered_out() {
+    // Test when all items in a group are filtered out
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    // Filter for values > 10 (none match)
+    let filtered = split.remove_multiple_with(&[a_disc], |e| match e {
+        E::A(v) if *v > 10 => Some(*v),
+        _ => None,
+    });
+
+    // Map contains the key but with an empty vec
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered.get(&a_disc).unwrap().len(), 0);
+}
+
+#[test]
+fn remove_multiple_with_partial_match() {
+    // Test remove_multiple_with with some discriminants not in the split
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::A(2)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let filtered = split.remove_multiple_with(&[a_disc, b_disc], |e| match e {
+        E::A(v) => Some(*v),
+        _ => None,
+    });
+
+    assert_eq!(filtered.len(), 1);
+    assert!(filtered.contains_key(&a_disc));
+    assert!(!filtered.contains_key(&b_disc));
+}
+
+// ── extract_multiple_with tests ───────────────────────────────────────────────
+
+#[test]
+fn extract_multiple_with_extracts_from_multiple_groups() {
+    // Test that extract_multiple_with extracts from all requested groups
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2), E::B("bye".into())];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+
+    let extracted = split.extract_multiple_with(&[a_disc, b_disc], |e| match e {
+        E::A(v) => Some(*v as usize),
+        E::B(s) => Some(s.len()),
+        _ => None,
+    });
+
+    assert_eq!(extracted.len(), 2);
+    assert_eq!(extracted.get(&a_disc).unwrap(), &[1usize, 2usize]);
+    assert_eq!(extracted.get(&b_disc).unwrap(), &[2usize, 3usize]);
+}
+
+#[test]
+fn extract_multiple_with_partial_match() {
+    // Test extract_multiple_with with some discriminants not in the split
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(5), E::A(10)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let extracted = split.extract_multiple_with(&[a_disc, b_disc], |e| match e {
+        E::A(v) => Some(*v * 2),
+        _ => None,
+    });
+
+    assert_eq!(extracted.len(), 1);
+    assert_eq!(extracted.get(&a_disc).unwrap(), &[10, 20]);
+    assert!(!extracted.contains_key(&b_disc));
+}
+
+#[test]
+fn extract_multiple_with_filtering() {
+    // Test extract_multiple_with with filtering (Some/None)
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2), E::A(3), E::A(4)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    // Extract only even values
+    let extracted = split.extract_multiple_with(&[a_disc], |e| match e {
+        E::A(v) if *v % 2 == 0 => Some(*v),
+        _ => None,
+    });
+
+    assert_eq!(extracted.get(&a_disc).unwrap(), &[2, 4]);
+}
+
+#[test]
+fn extract_multiple_with_empty_ids() {
+    // Test extract_multiple_with with empty ids slice
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let extracted = split.extract_multiple_with(&[], |e| match e {
+        E::A(v) => Some(*v),
+        _ => None,
+    });
+
+    assert_eq!(extracted.len(), 0);
+
+    // Original split should still have the group (extract doesn't remove)
+    assert_eq!(split.get(a_disc).unwrap().len(), 2);
+}
+
+#[test]
+fn extract_multiple_with_doesnt_remove() {
+    // Test that extract_multiple_with doesn't remove the groups
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    let _extracted = split.extract_multiple_with(&[a_disc], |e| match e {
+        E::A(v) => Some(*v),
+        _ => None,
+    });
+
+    // Groups should still be accessible
+    assert_eq!(split.get(a_disc).unwrap().len(), 2);
+
+    // Can extract again
+    let extracted2 = split.extract_multiple_with(&[a_disc], |e| match e {
+        E::A(v) => Some(*v * 10),
+        _ => None,
+    });
+
+    assert_eq!(extracted2.get(&a_disc).unwrap(), &[10, 20]);
+}
+// ── others_mut test ───────────────────────────────────────────────────────────
+
+#[test]
+fn others_mut_gives_mutable_access() {
+    let a_disc = discriminant(&E::A(0));
+    let mut data = [E::A(1), E::C, E::A(2), E::C];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    // Confirm others_mut compiles and yields the right count
+    assert_eq!(split.others_mut().len(), 2);
+    for item in split.others_mut() {
+        assert!(matches!(item, E::C));
+    }
+}
+
+// ── extract_with (single group) test ─────────────────────────────────────────
+
+#[test]
+fn extract_with_extracts_owned_values() {
+    let a_disc = discriminant(&E::A(0));
+    let c_disc = discriminant(&E::C);
+    let mut data = [E::A(3), E::A(7), E::A(4)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    // Extract only values > 4
+    let extracted = split
+        .extract_with(a_disc, |e| {
+            if let E::A(v) = e { if *v > 4 { Some(*v) } else { None } } else { None }
+        })
+        .unwrap();
+    assert_eq!(extracted, vec![7]);
+
+    // Group is still present (extract_with does not remove)
+    assert_eq!(split.get(a_disc).unwrap().len(), 3);
+
+    // Absent discriminant returns None
+    assert!(split.extract_with(c_disc, |_| Some(0u8)).is_none());
+}
+
+// ── &mut GroupMut into_iter test ──────────────────────────────────────────────
+
+#[test]
+fn group_mut_mut_ref_into_iterator() {
+    let a_disc = discriminant(&E::A(0));
+    let mut data = [E::A(1), E::A(2), E::A(3)];
+    let mut split = split_by_discriminant(&mut data[..], &[a_disc]);
+
+    {
+        let mut group = split.get_mut(a_disc).unwrap();
+        // IntoIterator for &mut GroupMut<G> — yields &mut G
+        for item in &mut group {
+            if let E::A(v) = item { *v += 10; }
+        }
+    }
+
+    let vals: Vec<i32> = split.get(a_disc).unwrap().iter()
+        .filter_map(|e| if let E::A(v) = e { Some(*v) } else { None })
+        .collect();
+    assert_eq!(vals, vec![11, 12, 13]);
+}

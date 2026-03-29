@@ -40,7 +40,7 @@ fn multi_field_extract_reborrow() {
     let mut ex = SplitWithExtractor::new(split, PairExtractor);
 
     {
-        let mut pairs: Vec<(&mut i32, &mut String)> = ex.extract_gat::<SelectPair>(pair_disc).unwrap();
+        let mut pairs: Vec<(&mut i32, &mut String)> = ex.as_mut_with::<SelectPair>(pair_disc).unwrap();
         assert_eq!(pairs.len(), 2);
         *pairs[0].0 += 10;
         pairs[0].1.push('!');
@@ -93,7 +93,7 @@ fn multi_field_get_mut_iter_form() {
     let mut split = split_by_discriminant(&mut data[..], &[pair_disc]);
     let mut pairs: Vec<(&mut i32, &mut String)> = if let Some(entries) = split.get_mut(pair_disc) {
         entries
-            .iter_mut()
+            .into_iter()
             .filter_map(|e| if let E::Pair(n, s) = e { Some((n, s)) } else { None })
             .collect()
     } else {

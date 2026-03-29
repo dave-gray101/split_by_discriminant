@@ -5,12 +5,16 @@
 
 ## Table of contents
 
+- [Complete method families](#complete-method-families)
 - [Core API](#core-api)
+- [Primary API](#primary-api)
 - [Feature flags](#feature-flags)
-- [Macros companion crate](#macros-companion-crate)
-- [Migration guide](#migration-guide)
-- [Extractor strategies](#extractor-strategies)
-- [Troubleshooting](#troubleshooting)
+- [Proc Macros](#proc-macros)
+- [Examples](#examples)
+- [FAQ](#faq)
+- [Supported inputs](#supported-inputs)
+- [Documentation](#documentation)
+- [Notes](#notes)
 
 ## Core API
 
@@ -29,16 +33,42 @@ operate on them, and then return them to the original collection.
 - `proc_macro`: enables macros re-exported from the library to the proc-macro crate
 
 
-## Reborrow vs. move semantics
+## Complete method families
 
-Two families of methods are provided for getting items out of a group:
+Methods are organized into four families by access pattern and ownership:
 
-| Family | Methods | Semantics |
-|---|---|---|
-| **Reborrow** | `extract`, `others` | The element stays in the map; a `&mut` reference into it is returned.  The returned lifetime is tied to the `&mut self` borrow, so it cannot outlive the map itself. |
-| **Move (remove)** | `remove`, `remove_mapped`, `remove_with`, `take_simple`, `take_extracted`, `remove_others` | The group or others vector is removed from the map and returned by value.  When `G = &'items mut T` the returned `Vec` carries the full original `'items` lifetime, allowing it to outlive the map in which it was temporarily stored. |
+| Family | Removes group? | Self borrow | Lifetime of returned refs |
+|--------|---------------|-------------|---------------------------|
+| **Immutable ref** | No | `&self` | tied to `&self` borrow |
+| **Mutable ref** | No | `&mut self` | tied to `&mut self` borrow |
+| **Take** | Yes | `&mut self` | full `'items` lifetime |
+| **Remove** | Yes | `&mut self` | full `'items` lifetime |
 
-Choose the **reborrow** family when you need multiple passes over the same group or when you will put the items back.  Choose the **move** family when you want to transfer ownership of the items to a longer-lived binding.
+### Single-item methods
+
+| Family | `DiscriminantMap` | `SplitWithExtractor` |
+|--------|-------------------|----------------------|
+| **Immutable ref** | — | `as_ref_simple(id)` · `as_ref<U>(id)` · `as_ref_with<S>(id)` · `map_as_ref(id, f)` |
+| **Mutable ref** | `map_as_mut(id, f)` | `as_mut_simple(id)` · `as_mut<U>(id)` · `as_mut_with<S>(id)` · `map_as_mut(id, f)` |
+| **Take** | — | `take_simple(id)` · `take_extracted<S>(id)` |
+| **Remove** | `remove(id)` · `remove_mapped(id, f)` · `remove_with(id, f)` · `remove_others()` | (same, forwarded) |
+
+### Batch methods (multiple discriminants at once)
+
+| Family | `DiscriminantMap` | `SplitWithExtractor` |
+|--------|-------------------|----------------------|
+| **Immutable ref** | `map_as_ref_multiple(ids, f)` | `as_ref_multiple_simple(ids)` · `as_ref_multiple<U>(ids)` · `as_ref_multiple_with<S>(ids)` · `map_as_ref_multiple(ids, f)` |
+| **Mutable ref** | `map_as_mut_multiple(ids, f)` | `as_mut_multiple_simple(ids)` · `as_mut_multiple<U>(ids)` · `as_mut_multiple_with<S>(ids)` · `map_as_mut_multiple(ids, f)` |
+| **Take** | — | `take_multiple_simple(ids)` · `take_multiple_extracted<S>(ids)` |
+| **Remove** | `remove_multiple(ids)` · `remove_multiple_mapped(ids, f)` · `remove_multiple_with(ids, f)` | (same, forwarded) |
+
+> **`extract_with(id, f)`** / **`extract_multiple_with(ids, f)`** (on both types): borrow
+> mutably and return owned `U` values without removing any groups. They bridge the
+> mutable-ref and take families.
+
+Choose **immutable ref** (`map_as_ref*`) when a `&self` borrow is required or you only need to read.
+Choose **mutable ref** (`as_mut*`, `map_as_mut*`) when you want to mutate or inspect without removing.
+Choose **take** or **remove** when the extracted values need to outlive the map.
 
 ## Primary API
 
@@ -80,8 +110,19 @@ Methods:
 
 **Inspection**
 - `others(&self)` — borrow the unmatched items as `&[O]`. Takes `&self`; safe to call without a mutable borrow.
+- `others_mut(&mut self)` — mutably borrow the unmatched items as `&mut [O]`.
 - `get(&self, id)` — borrow a particular group by discriminant as `&[G]`.
-- `get_mut(&mut self, id)` — mutably borrow a particular group as `&mut [G]`.
+- `get_mut(&mut self, id)` — mutably borrow a particular group as `GroupMut<'_, G>`. The
+  `GroupMut` wrapper exposes iteration, sorting, and `Index<usize>` read access while
+  intentionally omitting `IndexMut` to prevent accidentally writing the wrong variant
+  back into a slot.
+- `for_each_group_mut(&mut self, ids, f)` — call `f(discriminant, GroupMut)` once for each
+  discriminant in `ids` that is present. Use this to mutate several groups in a single pass
+  without tying borrow scopes together.
+- `extract_with(&mut self, id, f)` — borrow a group mutably and map each `&mut T` through
+  `f: FnMut(&mut T) -> Option<U>`, collecting owned `U` values without removing the group.
+- `extract_multiple_with(&mut self, ids, f)` — batch variant of `extract_with`; returns a
+  map of `Vec<U>` per discriminant.
 
 **Move (remove) — remove a group and take ownership of its elements**
 - `remove(&mut self, id)` — remove and return the group as `Vec<G>`, preserving the full original lifetime when `G` is a reference.
@@ -96,13 +137,35 @@ Methods:
 - `map_all(self, f)` — transform every group at once, consuming `self`.
 - `map_others(self, f)` — transform the others vector, consuming `self`.
 
+### `GroupMut<'a, G>`
+
+A newtype wrapper over `&'a mut [G]` returned by `get_mut` and yielded by
+`for_each_group_mut`.  It exposes `len`, `is_empty`, `as_slice`, `iter`,
+`iter_mut`, `sort_by`, `sort_unstable_by`, `reverse`, and `Index<usize>` for
+position-based read access.  `IndexMut` is deliberately omitted: writing
+`group[i] = wrong_variant` through `IndexMut` would silently corrupt the
+discriminant map's invariants.  Use `iter_mut` to mutate field values in place.
+
 ### Extraction Traits
 
-Three traits handle different extraction scenarios:
+Three traits handle mutable-extraction scenarios:
 
 - **`SimpleExtractFrom<T>`** — single-variant extractors with zero-annotation call site
 - **`VariantExtractFrom<T, U>`** — multi-variant extractors with binding-inferred `U`
 - **`ExtractFrom<T, Selector>`** — multi-field or complex outputs with explicit selector
+
+Three **read-only counterpart traits** mirror the above but take `&T` instead of `&mut T`,
+enabling the `as_ref_*` family with only a `&self` borrow on `SplitWithExtractor`:
+
+- **`SimpleReadFrom<T>`** — single-variant read-only; enables `as_ref_simple` (annotation-free)
+  and via blankets `as_ref<U>` and `as_ref_with::<()>`.
+- **`VariantReadFrom<T, U>`** — multi-variant read-only; enables `as_ref<U>` for each `U`.
+- **`ReadFrom<T, Selector>`** — GAT-based read-only; enables `as_ref_with<S>` for any selector.
+
+**No automatic blanket from `SimpleExtractFrom` → `SimpleReadFrom`:** because `extract_from`
+takes `&mut T`, it is impossible to soundly derive `read_from(&T)` from it. Both impls must
+be written separately — the bodies differ only in removing `mut` from the match arm.
+`#[derive(ExtractFrom)]` generates both sets automatically.
 
 **See [Four-Crate Pattern Guide](docs/four-crate-pattern-guide.md) for trait selection, implementation guidance, and decision trees.** The guide covers all traits, blanket impls, and patterns for factory-crate authors.
 
@@ -130,21 +193,29 @@ Methods available directly on `SplitWithExtractor`:
 
 **Inspection**
 - `others` — forwarded from the inner split.
+- `others_mut` — forwarded from the inner split.
 - `get` — forwarded from the inner split.
-- `get_mut` — forwarded from the inner split.
+- `get_mut` — forwarded from the inner split; returns `GroupMut<'_, G>`.
+- `for_each_group_mut` — forwarded from the inner split.
 
 **Move (remove) — remove a group and take ownership of its elements**
 - `remove` — forwarded from the inner split; full lifetime preservation.
 - `remove_mapped` — forwarded from the inner split.
 - `remove_with` — forwarded from the inner split.
 - `remove_others` — forwarded from the inner split.
-- `take_simple(&mut self, id)` — consuming counterpart of `extract_simple`; requires `E: SimpleExtractFrom<T>`. No turbofish, no annotation — the return type is fully determined by `E` and `T`. Returned elements carry the full `'items` lifetime.
+- `take_simple(&mut self, id)` — consuming counterpart of `as_mut_simple`; requires `E: SimpleExtractFrom<T>`. No turbofish, no annotation — the return type is fully determined by `E` and `T`. Returned elements carry the full `'items` lifetime.
 - `take_extracted<S>(&mut self, id)` — like `remove_with` but uses the bound extractor instead of a closure. Requires `E: TakeFrom<G, S>`, which is satisfied automatically for any `E: ExtractFrom<T, S>` when `G = &mut T`.
 
-**Reborrow — borrow into a group without removing it**
-- `extract<U>(&mut self, id)` — primary v0.4-style extraction; requires `E: VariantExtractFrom<T, U>`. `U` is inferred from the binding type on the receiving variable — no turbofish needed. Call once per variant in a separate scope so borrows do not overlap.
-- `extract_simple(&mut self, id)` — fully annotation-free extraction; requires `E: SimpleExtractFrom<T>`. The return type is determined entirely by `E` and `T`, so not even a binding type annotation is needed.
-- `extract_gat<S>(&mut self, id)` — extraction with an explicit selector; requires `E: ExtractFrom<T, S>`. Use this for multi-field outputs (tuples, named structs) or when `VariantExtractFrom` is not sufficient.
+**Immutable borrow — borrow from a group by shared reference**
+- `as_ref_simple(&self, id)` — fully annotation-free read-only access; requires `E: SimpleReadFrom<T>`. Takes `&self` and works with maps built from immutable slices (`G = &T`).
+- `as_ref<U>(&self, id)` — read-only access with `U` inferred from the binding; requires `E: VariantReadFrom<T, U>`. Every `SimpleReadFrom<T>` blankets `VariantReadFrom<T, Output>` automatically.
+- `as_ref_with<S>(&self, id)` — read-only access with explicit selector; requires `E: ReadFrom<T, S>`. Supports GAT outputs such as multi-field tuple references.
+- `map_as_ref(&self, id, f)` — read-only access via inline closure; no extractor trait required.
+
+**Mutable reborrow — borrow into a group without removing it**
+- `as_mut_simple(&mut self, id)` — fully annotation-free mutable extraction; requires `E: SimpleExtractFrom<T>`. The return type is determined entirely by `E` and `T`.
+- `as_mut<U>(&mut self, id)` — mutable extraction with `U` inferred from binding; requires `E: VariantExtractFrom<T, U>`. Call once per variant in a separate scope so borrows do not overlap.
+- `as_mut_with<S>(&mut self, id)` — mutable extraction with explicit selector; requires `E: ExtractFrom<T, S>`. Use for multi-field outputs or when `VariantExtractFrom` is not sufficient.
 
 **Consuming**
 - `into_inner(self) -> DiscriminantMap<T, G, O>` — unwrap to reach
@@ -209,8 +280,8 @@ let mut extractor = SplitWithExtractor::new(split, EExtractor);
 
 // U inferred from binding — each call lives in its own scope so &mut borrows
 // do not overlap.
-{ let ints: Vec<&mut i32>    = extractor.extract(a_disc).unwrap(); assert_eq!(ints.len(), 2); }
-{ let strs: Vec<&mut String> = extractor.extract(b_disc).unwrap(); assert_eq!(strs.len(), 1); }
+{ let ints: Vec<&mut i32>    = extractor.as_mut(a_disc).unwrap(); assert_eq!(ints.len(), 2); }
+{ let strs: Vec<&mut String> = extractor.as_mut(b_disc).unwrap(); assert_eq!(strs.len(), 1); }
 
 // Consuming methods are reached via into_inner().
 let (_, others) = extractor.into_inner().into_parts();
@@ -306,7 +377,8 @@ let (groups, _) = split.into_parts();
 assert_eq!(groups[&a_disc].len(), 1);
 ```
 
-Or use immutable references (extraction not available on immutable refs):
+Or use immutable references — `as_ref_*` and `map_as_ref` methods are available;
+`as_mut_*` and `take_*` require `G = &mut T`:
 
 ```rust
 use split_by_discriminant::{split_by_discriminant, DiscriminantMap};
@@ -355,10 +427,7 @@ use split_by_discriminant_macros::ExtractFrom;
 use split_by_discriminant::{split_by_discriminant, SplitWithExtractor};
 use std::mem::discriminant;
 
-#[derive(Debug)]
-enum E { A(i32), B }
-
-#[derive(ExtractFrom)]
+#[derive(Debug, ExtractFrom)]
 enum E { A(i32), B }
 
 let mut data = vec![E::A(1), E::B];
@@ -366,7 +435,8 @@ let a_disc = discriminant(&E::A(0));
 
 let split = split_by_discriminant(&mut data, &[a_disc]);
 let mut extractor = SplitWithExtractor::new(split, EExtractor);
-let ints: Vec<&mut i32> = extractor.extract(a_disc).unwrap();
+// EExtractor implements SimpleExtractFrom<E> — no turbofish needed
+let ints: Vec<&mut i32> = extractor.as_mut_simple(a_disc).unwrap();
 ```
 
 
@@ -429,6 +499,61 @@ enum Empty {}
 
 
 
+## FAQ
+
+### When should I use `as_ref_*` vs `as_mut_*`?
+
+Use the **`as_ref_*` / `map_as_ref`** family when you only need to **read** inner fields:
+- Takes `&self` — no exclusive borrow, so multiple reads can coexist without conflicting borrows.
+- Works with maps built from immutable slices (`G = &T`), where `BorrowMut<T>` would not be satisfiable.
+- Requires the extractor to implement `SimpleReadFrom<T>`, `VariantReadFrom<T, U>`, or `ReadFrom<T, S>`. `#[derive(ExtractFrom)]` generates these automatically.
+
+Use the **`as_mut_*` / `map_as_mut`** family when you need to **mutate** inner fields in-place.
+These require `G: BorrowMut<T>` and take `&mut self`.
+
+### Why does `map_as_*` require a closure?
+
+The `as_mut_simple`, `as_mut<U>`, and `as_mut_with<S>` methods dispatch extraction
+through extractor traits compiled into `E`, which lets the compiler infer the output
+type from the binding at the call site — zero annotations needed.
+
+The `map_as_*` variants accept a closure instead.  Use them for one-off transformations,
+foreign enums, or any situation where a dedicated extractor type would be overkill.
+
+### Should I implement `SimpleExtractFrom` or `ExtractFrom` directly?
+
+- **`SimpleExtractFrom<T>`** — the right choice when your extractor covers exactly
+  one variant with exactly one field.  The associated `Output` type lets `as_mut_simple`
+  and `take_simple` work with no annotations.
+- **`ExtractFrom<T, S>`** — use this for multi-field outputs (tuples), multiple variants
+  with the same field type, or when you need GAT lifetime parameters in the return type.
+  Use a distinct selector ZST per logical extraction target.
+
+`#[derive(ExtractFrom)]` from `split_by_discriminant_macros` automatically picks the
+right strategy.  See the [Four-Crate Pattern Guide](docs/four-crate-pattern-guide.md)
+for full decision trees.
+
+### When do I need `take_*` instead of `as_mut_*`?
+
+When the extracted references need to **outlive** the `SplitWithExtractor`.  The
+`as_mut_*` family reborrows elements through the map's `&mut self` borrow; the result
+cannot escape that scope.  The `take_*` family removes the group from the map and
+moves each element by value, preserving the full `'items` lifetime.
+
+See [docs/lifetime-model.md](docs/lifetime-model.md) for an annotated walkthrough.
+
+### Should I implement `SimpleReadFrom` alongside `SimpleExtractFrom`?
+
+Implement `SimpleReadFrom<T>` whenever `as_ref_*` access is useful — either as a
+complement to `SimpleExtractFrom<T>` (giving both mutable and read-only access) or
+by itself (making `as_mut_*` unavailable, enforcing read-only access at the
+type level).
+
+There is **no automatic blanket from `SimpleExtractFrom` → `SimpleReadFrom`** because
+`extract_from` takes `&mut T`.  When both are wanted, write both impls explicitly —
+the bodies differ only in removing `mut` from the match arm.  `#[derive(ExtractFrom)]`
+generates both impls automatically.
+
 ## Supported inputs
 
 - `&mut [T]` or `&mut Vec<T>` → `DiscriminantMap<T, &mut T>`
@@ -442,7 +567,10 @@ enum Empty {}
 
 ## Documentation
 
-- **[Four-Crate Pattern Guide](docs/four-crate-pattern-guide.md)** — Complete implementation guide for factory-crate authors. Covers all extraction traits, decision trees, blanket impls, and patterns.
+- **[Four-Crate Pattern Guide](docs/four-crate-pattern-guide.md)** — Complete implementation guide for factory-crate authors. Covers all mutable and read-only extraction traits, blanket impls, decision trees, and selector patterns.
+- **[API Matrix Dimensions](docs/api-matrix-dimensions.md)** — Reference guide explaining the five dimensions that organize the full method matrix.
+- **[Lifetime Model](docs/lifetime-model.md)** — Annotated walkthrough of reborrow vs. move/take lifetime semantics.
+- **[v0.5 to v0.6 Migration Guide](docs/v0.5-to-v0.6-guide.md)** — Upgrading from v0.5. New idiomatic method names for reference access.
 - **[v0.4 to v0.5 Migration Guide](docs/v0.4-to-v0.5-guide.md)** — Upgrading from v0.4. Method renames and trait changes.
 
 ## Notes

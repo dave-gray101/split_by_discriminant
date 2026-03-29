@@ -41,20 +41,20 @@ fn split_with_extractor_extracts_v4_and_v6() {
 
         // U inferred from binding — no closure, no turbofish, no selector ZST
         {
-            let mut v4s: Vec<&mut Ipv4Addr> = extractor.extract(v4_disc).unwrap();
+            let mut v4s: Vec<&mut Ipv4Addr> = extractor.as_mut(v4_disc).unwrap();
             assert_eq!(v4s.len(), 2);
             // mutate through the reference — visible in addrs after borrow ends
             *v4s[0] = Ipv4Addr::new(10, 0, 0, 1);
         }
         {
-            let v6s: Vec<&mut Ipv6Addr> = extractor.extract(v6_disc).unwrap();
+            let v6s: Vec<&mut Ipv6Addr> = extractor.as_mut(v6_disc).unwrap();
             assert_eq!(v6s.len(), 1);
         }
 
         // get() and extract() are available directly on SplitWithExtractor
         assert_eq!(extractor.get(v4_disc).unwrap().len(), 2);
         // extract again (reborrow, not consumed) to show it works
-        let _: Option<Vec<&mut Ipv4Addr>> = extractor.extract(v4_disc);
+        let _: Option<Vec<&mut Ipv4Addr>> = extractor.as_mut(v4_disc);
 
         // consuming methods reached via into_inner()
         let (groups, others) = extractor.into_inner().into_parts();
@@ -76,7 +76,7 @@ fn split_with_extractor_nonexistent_discriminant_returns_none() {
     let split = split_by_discriminant(&mut addrs, &[v4_disc]);
     let mut extractor = SplitWithExtractor::new(split, IpAddrExtractor);
 
-    assert!(extractor.extract::<Ipv6Addr>(v6_disc).is_none());
+    assert!(extractor.as_mut::<Ipv6Addr>(v6_disc).is_none());
 }
 
 #[test]

@@ -36,8 +36,14 @@ fn main() {
     let mut split = split_by_discriminant(&mut values, &[a_disc]);
     let mut extractor = split_by_discriminant::SplitWithExtractor::new(split, EExtractor);
 
-    let a_values: Vec<&mut i32> = extractor.extract(a_disc).unwrap();
+    // Mutable: as_mut_simple / as_mut require &mut
+    let a_values: Vec<&mut i32> = extractor.as_mut(a_disc).unwrap();
     assert_eq!(a_values.len(), 2);
+    drop(a_values);
+
+    // Read-only: as_ref_simple / as_ref require only &self
+    let a_refs: Vec<&i32> = extractor.as_ref(a_disc).unwrap();
+    assert_eq!(a_refs.len(), 2);
 }
 ```
 
@@ -72,8 +78,16 @@ Produces an extractor type named `<EnumName>Extractor` by default.
 
 ### Behavior
 
-- For single-field variants, `VariantExtractFrom` is implemented for the field type.
-- For multi-field or repeated field-type variants, selector structs are generated (default style: `Select{Enum}{Variant}`) and `ExtractFrom` is implemented for those selectors.
+- For single-field variants with a unique field type across all variants, `VariantExtractFrom`
+  and `VariantReadFrom` are implemented for that field type.
+- For multi-field or repeated field-type variants, selector structs are generated (default
+  style: `Select{Enum}{Variant}`) and both `ExtractFrom` and `ReadFrom` are implemented
+  for those selectors.
+- Read-only counterparts (`SimpleReadFrom`, `VariantReadFrom`, `ReadFrom`) are always
+  generated alongside their mutable counterparts, enabling both `as_ref_*` and `as_mut_*`
+  methods on the generated extractor.
+- There is **no automatic blanket from `SimpleExtractFrom` → `SimpleReadFrom`**; the derive
+  macro generates both explicitly.
 
 ## `extract_from!` macro
 
@@ -81,7 +95,7 @@ Produces an extractor type named `<EnumName>Extractor` by default.
 
 Example:
 
-```rust
+```rust,no_run
 use split_by_discriminant_macros::extract_from;
 
 extract_from! {
@@ -99,12 +113,13 @@ Parameters:
 
 - First argument: group name (required). Used in documentation, and for defaults below.
 - `extractor = <ExtractorType>`: extractor type name (default: `<GroupName>Extractor`)
-- `fn_name = <function_name>` / `fn = <function_name>` / `function = <function_name>`: generated helper function name (default: `make_<GroupName>_extractor`)
-- `trait = <TraitName>` / `trait_name = <TraitName>`: optional extra trait bound for the generated function signature
+- `fn_name = <function_name>` / `function = <function_name>`: generated mutable helper function name (default: `make_<GroupName>_extractor`)
+- `ref_fn_name = <function_name>` / `ref_function = <function_name>`: optional generated read-only companion function name (uses `Borrow<T>` instead of `BorrowMut<T>`)
+- `trait_name = <TraitName>`: optional extra trait bound for the generated function signature
 
 Example:
 
-```rust
+```rust,ignore
 use split_by_discriminant_macros::make_extractor;
 
 struct MyExtractor;
@@ -112,7 +127,7 @@ impl split_by_discriminant::VariantExtractFrom<E, i32> for MyExtractor {
     fn extract_from<'a>(&self, item: &'a mut E) -> Option<&'a mut i32> { /* ... */ }
 }
 
-make_extractor!(E, extractor = MyExtractor, fn_name = make_my_extractor, trait = MyTrait);
+make_extractor!(E, extractor = MyExtractor, fn_name = make_my_extractor, trait_name = MyTrait);
 ```
 
 ## Notes

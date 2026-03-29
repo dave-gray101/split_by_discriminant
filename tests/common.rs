@@ -5,7 +5,8 @@
 
 use std::mem::discriminant;
 
-use split_by_discriminant::{ExtractFrom, SimpleExtractFrom, VariantExtractFrom};
+use split_by_discriminant::{ExtractFrom, SimpleExtractFrom, VariantExtractFrom,
+                            ReadFrom, SimpleReadFrom, VariantReadFrom};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum E {
@@ -37,6 +38,13 @@ impl SimpleExtractFrom<E> for SimpleExtractor {
     }
 }
 
+impl SimpleReadFrom<E> for SimpleExtractor {
+    type Output = i32;
+    fn read_from<'a>(&self, t: &'a E) -> Option<&'a i32> {
+        if let E::A(v) = t { Some(v) } else { None }
+    }
+}
+
 /// A full-featured extractor demonstrating both extraction traits on one type:
 ///
 /// * [`SimpleExtractFrom<E>`] handles `E::A(i32)`.  The blanket automatically
@@ -56,6 +64,29 @@ impl SimpleExtractFrom<E> for ComplexExtractor {
     type Output = i32;
     fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut i32> {
         if let E::A(v) = t { Some(v) } else { None }
+    }
+}
+
+impl SimpleReadFrom<E> for ComplexExtractor {
+    type Output = i32;
+    fn read_from<'a>(&self, t: &'a E) -> Option<&'a i32> {
+        if let E::A(v) = t { Some(v) } else { None }
+    }
+}
+
+/// `VariantReadFrom<E, i32>` is provided by the `SimpleReadFrom<E>` blanket.
+/// Add immutable `String` extraction for `E::B`:
+impl VariantReadFrom<E, String> for ComplexExtractor {
+    fn read_from<'a>(&self, t: &'a E) -> Option<&'a String> {
+        if let E::B(v) = t { Some(v) } else { None }
+    }
+}
+
+/// GAT immutable extraction via selector — used by `as_ref_with::<SelectB>`.
+impl ReadFrom<E, SelectB> for ComplexExtractor {
+    type Output<'a> = &'a String where E: 'a;
+    fn read_from<'a>(&self, t: &'a E) -> Option<Self::Output<'a>> {
+        if let E::B(v) = t { Some(v) } else { None }
     }
 }
 
@@ -79,4 +110,8 @@ pub fn a_disc() -> std::mem::Discriminant<E> {
 
 pub fn b_disc() -> std::mem::Discriminant<E> {
     discriminant(&E::B(String::new()))
+}
+
+pub fn c_disc() -> std::mem::Discriminant<E> {
+    discriminant(&E::C)
 }

@@ -6,7 +6,7 @@ members = [
 
 [package]
 name = "split_by_discriminant"
-version = "0.5.7"
+version = "0.6.0"
 edition = "2024"
 authors = ["Dave Lee <dave@gray101.com>"]
 license = "MIT"
@@ -25,3 +25,7 @@ heck = "0.5"
 default = []
 indexmap = ["dep:indexmap"]
 proc_macro = ["dep:syn", "dep:quote", "dep:proc-macro2"]
+
+[lints]
+workspace = true
+

@@ -28,10 +28,10 @@ pub trait SimpleExtractFrom<T> {
 
 - One impl per `(Extractor, T)` pair — the compiler knows the output type without any
   annotation at all.
-- Enables `extract_simple(disc)` — **zero annotations, zero turbofish** at the call site.
+- Enables `as_mut_simple(disc)` — **zero annotations, zero turbofish** at the call site.
 - Blanket impls provided automatically:
   - `ExtractFrom<T, ()>` → `take_extracted::<()>(disc)` works for free.
-  - `VariantExtractFrom<T, Output>` → `extract(disc)` with a binding annotation also works.
+  - `VariantExtractFrom<T, Output>` → `as_mut(disc)` with a binding annotation also works.
 - **Do not** also write `ExtractFrom<T, ()>` or `VariantExtractFrom<T, YourOutput>` by hand;
   the blankets fill those slots and a duplicate impl is a compile error.
 
@@ -142,10 +142,10 @@ impl SimpleExtractFrom<ForeignEnum> for MyExtractor {
 
 ```rust
 // Fully annotation-free:
-let items = ex.extract_simple(disc).unwrap();
+let items = ex.as_mut_simple(disc).unwrap();
 
 // Or with binding annotation (still no turbofish):
-let items: Vec<&mut FieldType> = ex.extract_simple(disc).unwrap();
+let items: Vec<&mut FieldType> = ex.as_mut_simple(disc).unwrap();
 ```
 
 The binding annotation is optional because the output type is fully determined by
@@ -153,7 +153,7 @@ The binding annotation is optional because the output type is fully determined b
 
 **Also available for free (no extra impl):**
 - `ex.take_extracted::<()>(disc)` — consume-and-extract with full `'items` lifetime.
-- `ex.extract(disc)` with a binding annotation (via the `VariantExtractFrom` blanket).
+- `ex.as_mut(disc)` with a binding annotation (via the `VariantExtractFrom` blanket).
 
 ---
 
@@ -182,19 +182,19 @@ impl VariantExtractFrom<ForeignEnum, FieldB> for MyExtractor {
 **Downstream call sites (binding annotation infers `U`, no turbofish):**
 
 ```rust
-// U inferred from binding — this is the v0.4 style:
-let a_items: Vec<&mut FieldA> = ex.extract(a_disc).unwrap();
-let b_items: Vec<&mut FieldB> = ex.extract(b_disc).unwrap();
+// U inferred from binding:
+let a_items: Vec<&mut FieldA> = ex.as_mut(a_disc).unwrap();
+let b_items: Vec<&mut FieldB> = ex.as_mut(b_disc).unwrap();
 ```
 
 **Tip:** If exactly one of these variants is the "primary" one and you want an even
-simpler `extract_simple` path for it, implement `SimpleExtractFrom<T>` for that variant
+simpler `as_mut_simple` path for it, implement `SimpleExtractFrom<T>` for that variant
 and then `VariantExtractFrom<T, U>` for all others. The blanket covers the primary
 variant's `VariantExtractFrom` automatically; write it manually only for the additional
 variants.
 
 ```rust
-// Optional refinement: one variant gets annotation-free extract_simple, rest use extract()
+// Optional refinement: one variant gets annotation-free as_mut_simple, rest use as_mut()
 impl SimpleExtractFrom<ForeignEnum> for MyExtractor {
     type Output = FieldA;  // primary variant
     fn extract_from<'a>(&self, t: &'a mut ForeignEnum) -> Option<&'a mut FieldA> { … }
@@ -227,7 +227,7 @@ impl ExtractFrom<ForeignEnum, SelectPair> for MyExtractor {
 **Downstream call sites (turbofish required for the selector):**
 
 ```rust
-let pairs: Vec<(&mut i32, &mut String)> = ex.extract_gat::<SelectPair>(disc).unwrap();
+let pairs: Vec<(&mut i32, &mut String)> = ex.as_mut_with::<SelectPair>(disc).unwrap();
 ```
 
 The binding annotation on the left still helps readability but the `:<SelectPair>`
@@ -268,8 +268,8 @@ impl ExtractFrom<E, SelectLow> for MyExtractor {
 **Downstream call sites (turbofish unavoidable):**
 
 ```rust
-let high: Vec<&mut i32> = ex.extract_gat::<SelectHigh>(high_disc).unwrap();
-let low:  Vec<&mut i32> = ex.extract_gat::<SelectLow>(low_disc).unwrap();
+let high: Vec<&mut i32> = ex.as_mut_with::<SelectHigh>(high_disc).unwrap();
+let low:  Vec<&mut i32> = ex.as_mut_with::<SelectLow>(low_disc).unwrap();
 ```
 
 The turbofish is here because the binding type `i32` alone is not enough to choose
@@ -279,7 +279,7 @@ between the two impls; the selector provides the missing disambiguation.
 
 ### §3.E — Closure-based extraction (no trait impl needed)
 
-The `extract_with` method lets you extract without defining an extractor type — just pass
+The `map_as_mut` method lets you extract without defining an extractor type — just pass
 a closure that returns `Option<&'a mut U>`. This is useful when:
 - You need a one-off extraction and don't want to define a struct + traits.
 - You're in application code (not a factory crate) and don't expect reuse.
@@ -299,13 +299,100 @@ let a_disc = discriminant(&E::A(0));
 let mut split = split_by_discriminant(&mut data, &[a_disc]);
 
 // No extractor struct needed — closure handles the logic
-let ints: Vec<&mut i32> = split.extract_with(a_disc, |e| {
+let ints: Vec<&mut i32> = split.map_as_mut(a_disc, |e| {
     if let E::A(v) = e { Some(v) } else { None }
 }).unwrap();
 ```
 
 The closure is available on both `DiscriminantMap` and `SplitWithExtractor`, making it
 flexible whether or not you have an extractor struct.
+
+---
+
+### §3.F — Adding Read-Only Access
+
+Each mutable extraction trait has a read-only counterpart that takes `&T` instead of
+`&mut T`, enabling the `as_ref_*` family.  These require only `G: Borrow<T>` and
+take `&self` on `SplitWithExtractor`, so they work with maps built from immutable
+slices (`G = &T`) and allow concurrent reads without borrow conflicts.
+
+| Mutable trait | Read-only counterpart | Enabled `as_ref_*` methods |
+|---|---|---|
+| `SimpleExtractFrom<T>` | `SimpleReadFrom<T>` | `as_ref_simple`, `as_ref` (blanket), `as_ref_with::<()>` (blanket) |
+| `VariantExtractFrom<T, U>` | `VariantReadFrom<T, U>` | `as_ref(disc)` with binding annotation |
+| `ExtractFrom<T, S>` | `ReadFrom<T, S>` | `as_ref_with::<S>(disc)` |
+
+**`#[derive(ExtractFrom)]` generates both mutable and read-only impls automatically.**
+Manual implementation is only needed for foreign enums or custom selection logic.
+
+**No automatic blanket from `SimpleExtractFrom` → `SimpleReadFrom`:** `extract_from`
+takes `&mut T`, so deriving `read_from(&T)` from it would require unsound coercion.
+Both impls must be written separately — the bodies differ only in removing `mut` from
+the match arm:
+
+```rust
+use split_by_discriminant::{SimpleExtractFrom, SimpleReadFrom};
+
+#[derive(Debug)] enum MyEnum { A(i32), B }
+struct MyExtractor;
+
+// Mutable access (as_mut_* family)
+impl SimpleExtractFrom<MyEnum> for MyExtractor {
+    type Output = i32;
+    fn extract_from<'a>(&self, t: &'a mut MyEnum) -> Option<&'a mut i32> {
+        if let MyEnum::A(v) = t { Some(v) } else { None }
+    }
+}
+
+// Read-only access (as_ref_* family) — only 'mut' is removed from the pattern
+impl SimpleReadFrom<MyEnum> for MyExtractor {
+    type Output = i32;
+    fn read_from<'a>(&self, t: &'a MyEnum) -> Option<&'a i32> {
+        if let MyEnum::A(v) = t { Some(v) } else { None }
+    }
+}
+```
+
+With both impls, the extractor exposes:
+- `ex.as_mut_simple(disc)` / `ex.as_ref_simple(disc)` — annotation-free
+- `ex.as_mut(disc)` / `ex.as_ref(disc)` — `U` inferred from binding
+
+#### Read-only-only extractor
+
+Implement **only** `SimpleReadFrom<T>` to make `as_mut_*` statically unavailable:
+
+```rust
+struct ReadOnlyEx;
+
+impl SimpleReadFrom<MyEnum> for ReadOnlyEx {
+    type Output = i32;
+    fn read_from<'a>(&self, t: &'a MyEnum) -> Option<&'a i32> {
+        if let MyEnum::A(v) = t { Some(v) } else { None }
+    }
+}
+// ex.as_ref_simple(disc) → works
+// ex.as_mut_simple(disc) → compile error: SimpleExtractFrom not satisfied
+```
+
+#### Works with immutable source data
+
+Because `as_ref_*` requires only `G: Borrow<T>`, these methods work even when the
+map was built from a non-mutable slice:
+
+```rust
+use split_by_discriminant::{split_by_discriminant, SplitWithExtractor, SimpleReadFrom};
+use std::mem::discriminant;
+
+#[derive(Debug)] enum E { A(i32), B }
+// (MyExtractor implements SimpleReadFrom<E> as above)
+
+let data = [E::A(1), E::A(2), E::B];           // not mut
+let a_disc = discriminant(&E::A(0));
+let split = split_by_discriminant(&data[..], &[a_disc]); // G = &E
+let ex = SplitWithExtractor::new(split, MyExtractor);
+let ints: Vec<&i32> = ex.as_ref_simple(a_disc).unwrap(); // fine
+// ex.as_mut_simple(a_disc)                               // compile error — G not BorrowMut
+```
 
 ---
 
@@ -316,7 +403,7 @@ flexible whether or not you have an extractor struct.
 `ExtractFrom<T, Selector>` and `TakeFrom<G, Selector>` carry a second type parameter
 whose sole job is to **give each impl a unique identity on the same extractor type**.
 It is never instantiated at runtime — a selector is always a zero-sized type (ZST) that
-exists purely as a type-level label.  When you write `ex.extract_gat::<SelectFoo>(disc)`
+exists purely as a type-level label.  When you write `ex.as_mut_with::<SelectFoo>(disc)`
 the `SelectFoo` turbofish tells the compiler which of the potentially many
 `ExtractFrom` impls on your extractor to call.
 
@@ -389,8 +476,8 @@ impl ExtractFrom<Player, SelectScore> for MyExtractor {
 ```rust
 use factory::{MyExtractor, SelectName, SelectScore};
 
-let names:  Vec<&mut String> = ex.extract_gat::<SelectName>(disc).unwrap();
-let scores: Vec<&mut u32>    = ex.extract_gat::<SelectScore>(disc).unwrap();
+let names:  Vec<&mut String> = ex.as_mut_with::<SelectName>(disc).unwrap();
+let scores: Vec<&mut u32>    = ex.as_mut_with::<SelectScore>(disc).unwrap();
 ```
 
 The real cost of named selectors is the import, not the turbofish — once imported,
@@ -450,9 +537,9 @@ impl ExtractFrom<Priority, SelectLow> for PriorityExtractor {
 ```rust
 use factory::{PriorityExtractor, SelectHigh, SelectMedium, SelectLow};
 
-let high:   Vec<&mut i32> = ex.extract_gat::<SelectHigh>(high_disc).unwrap();
-let medium: Vec<&mut i32> = ex.extract_gat::<SelectMedium>(med_disc).unwrap();
-let low:    Vec<&mut i32> = ex.extract_gat::<SelectLow>(low_disc).unwrap();
+let high:   Vec<&mut i32> = ex.as_mut_with::<SelectHigh>(high_disc).unwrap();
+let medium: Vec<&mut i32> = ex.as_mut_with::<SelectMedium>(med_disc).unwrap();
+let low:    Vec<&mut i32> = ex.as_mut_with::<SelectLow>(low_disc).unwrap();
 ```
 
 There is no language feature in stable Rust that could disambiguate three impls whose
@@ -485,10 +572,10 @@ Call sites:
 
 ```rust
 // primary variant — annotation-free:
-let ints: Vec<&mut i32> = ex.extract_simple(disc_a).unwrap();
+let ints: Vec<&mut i32> = ex.as_mut_simple(disc_a).unwrap();
 
 // additional variant — turbofish required:
-let strs: Vec<&mut String> = ex.extract_gat::<SelectStr>(disc_b).unwrap();
+let strs: Vec<&mut String> = ex.as_mut_with::<SelectStr>(disc_b).unwrap();
 
 // consuming for primary — minimal turbofish:
 let ints: Vec<&mut i32> = ex.take_extracted::<()>(disc_a).unwrap();
@@ -517,12 +604,12 @@ to your crate (to satisfy the orphan rule when the impl is on your extractor typ
 
 | Scenario | Factory crate implements | Downstream call style |
 |---|---|---|
-| Single extractable variant | `SimpleExtractFrom<T>` | `ex.extract_simple(disc)` — **no annotation at all** |
-| Single variant, prefer `extract()` | `SimpleExtractFrom<T>` (blanket fills `VariantExtractFrom`) | `let x: Vec<&mut U> = ex.extract(disc)` — **binding annotation only** |
-| Multiple variants, all distinct field types | `VariantExtractFrom<T, U>` per variant | `let x: Vec<&mut U> = ex.extract(disc)` — **binding annotation only** |
-| Multi-field output (`(&mut A, &mut B)`) | `ExtractFrom<T, SelectX>` | `ex.extract_gat::<SelectX>(disc)` — **turbofish required** |
-| Duplicate field types across variants | `ExtractFrom<T, SelectX>` per variant | `ex.extract_gat::<SelectX>(disc)` — **turbofish required** |
-| Lifetime-carrying output (`&'a mut str`, etc.) | `ExtractFrom<T, SelectX>` | `ex.extract_gat::<SelectX>(disc)` — **turbofish required** |
+| Single extractable variant | `SimpleExtractFrom<T>` | `ex.as_mut_simple(disc)` — **no annotation at all** |
+| Single variant, prefer `as_mut()` | `SimpleExtractFrom<T>` (blanket fills `VariantExtractFrom`) | `let x: Vec<&mut U> = ex.as_mut(disc)` — **binding annotation only** |
+| Multiple variants, all distinct field types | `VariantExtractFrom<T, U>` per variant | `let x: Vec<&mut U> = ex.as_mut(disc)` — **binding annotation only** |
+| Multi-field output (`(&mut A, &mut B)`) | `ExtractFrom<T, SelectX>` | `ex.as_mut_with::<SelectX>(disc)` — **turbofish required** |
+| Duplicate field types across variants | `ExtractFrom<T, SelectX>` per variant | `ex.as_mut_with::<SelectX>(disc)` — **turbofish required** |
+| Lifetime-carrying output (`&'a mut str`, etc.) | `ExtractFrom<T, SelectX>` | `ex.as_mut_with::<SelectX>(disc)` — **turbofish required** |
 
 **Summary:** turbofish is mandatory only when the output type cannot be represented as a
 plain concrete owned type `U` in `Option<&'a mut U>`, or when two variants share the
@@ -583,31 +670,57 @@ When two enum types have variants with the same concrete field type (e.g., both 
 
 ## 8. Quick Reference: Trait → Call-site Method Map
 
+### Mutable extraction (`as_mut_*`, `take_*`)
+
 | Trait(s) implemented | Reborrow methods | Consuming methods |
 |---|---|---|
-| `SimpleExtractFrom<T>` | `extract_simple(disc)` · `extract(disc)` | `take_simple(disc)` · `take_extracted::<()>(disc)` |
-| `VariantExtractFrom<T, U>` | `extract(disc)` with binding | `remove_with(disc, closure)` |
-| `ExtractFrom<T, S>` | `extract_gat::<S>(disc)` | `take_extracted::<S>(disc)` |
-| `SimpleExtractFrom<T>` + `VariantExtractFrom<T, U2>` | `extract_simple`, `extract` for both | `take_simple`, `take_extracted::<()>`, `remove_with` for U2 |
-| `SimpleExtractFrom<T>` + `ExtractFrom<T, S2>` | `extract_simple`, `extract_gat::<S2>` | `take_simple`, `take_extracted::<()>`, `take_extracted::<S2>` |
-| `VariantExtractFrom<T, U>` + `ExtractFrom<T, S>` (same variant) | `extract` + `extract_gat::<S>` | `take_extracted::<S>` |
+| `SimpleExtractFrom<T>` | `as_mut_simple(disc)` · `as_mut(disc)` | `take_simple(disc)` · `take_extracted::<()>(disc)` |
+| `VariantExtractFrom<T, U>` | `as_mut(disc)` with binding annotation | `remove_with(disc, closure)` |
+| `ExtractFrom<T, S>` | `as_mut_with::<S>(disc)` | `take_extracted::<S>(disc)` |
+| `SimpleExtractFrom<T>` + `VariantExtractFrom<T, U2>` | `as_mut_simple`, `as_mut` for both | `take_simple`, `take_extracted::<()>`, `remove_with` for U2 |
+| `SimpleExtractFrom<T>` + `ExtractFrom<T, S2>` | `as_mut_simple`, `as_mut_with::<S2>` | `take_simple`, `take_extracted::<()>`, `take_extracted::<S2>` |
+| `VariantExtractFrom<T, U>` + `ExtractFrom<T, S>` (same variant) | `as_mut` + `as_mut_with::<S>` | `take_extracted::<S>` |
+
+### Read-only access (`as_ref_*`)
+
+All `as_ref_*` methods take `&self` and require only `G: Borrow<T>` (no `BorrowMut` required).
+
+| Trait(s) implemented | Read-only methods |
+|---|---|
+| `SimpleReadFrom<T>` | `as_ref_simple(disc)` · `as_ref(disc)` · `as_ref_with::<()>(disc)` |
+| `VariantReadFrom<T, U>` | `as_ref(disc)` with binding annotation |
+| `ReadFrom<T, S>` | `as_ref_with::<S>(disc)` |
+| `SimpleReadFrom<T>` + `VariantReadFrom<T, U2>` | `as_ref_simple`, `as_ref` for both |
+| `SimpleReadFrom<T>` + `ReadFrom<T, S2>` | `as_ref_simple`, `as_ref_with::<S2>` |
+
+Batch variants (`as_ref_multiple_simple`, `as_ref_multiple<U>`, `as_ref_multiple_with<S>`,
+`as_mut_multiple_simple`, `as_mut_multiple<U>`, `as_mut_multiple_with<S>`) follow the
+same trait requirements with an `&[Discriminant<T>]` parameter.
 
 ---
 
 ## 9. Blanket Impl Summary
 
-The library ships three blanket impls that reduce boilerplate:
+The library ships blanket impls that reduce boilerplate:
 
 ```
-SimpleExtractFrom<T>
-    → ExtractFrom<T, ()>                    (do not implement manually)
-    → VariantExtractFrom<T, Output>         (do not implement manually)
+Mutable extraction:
+  SimpleExtractFrom<T>
+      → ExtractFrom<T, ()>                    (do not implement manually)
+      → VariantExtractFrom<T, Output>         (do not implement manually)
 
-ExtractFrom<T, S>  (where G = &'a mut T)
-    → TakeFrom<&'a mut T, S>               (do not implement manually)
+  ExtractFrom<T, S>  (where G = &'a mut T)
+      → TakeFrom<&'a mut T, S>               (do not implement manually)
+
+Read-only access:
+  SimpleReadFrom<T>
+      → ReadFrom<T, ()>                       (do not implement manually)
+      → VariantReadFrom<T, Output>            (do not implement manually)
 ```
 
 Only implement `TakeFrom` directly when `G` is an **owned** value (not `&mut T`).
+Never implement the read-only blanket targets manually when `SimpleReadFrom<T>` is
+already in place — the blanket fills those slots and a duplicate impl will fail to compile.
 
 ---
 
@@ -861,7 +974,9 @@ flowchart LR
 ## 12. Implementation Subset → Available Methods
 
 > **Always available** on every `SplitWithExtractor`, regardless of which traits are implemented:
-> `get` · `get_mut` · `others` · `remove` · `remove_mapped` · `remove_with` · `remove_others` · `extract_with(closure)` · `into_inner`
+> `get` · `get_mut` (returns `GroupMut<'_, G>`) · `others` · `others_mut` ·
+> `for_each_group_mut` · `extract_with(closure)` · `extract_multiple_with(closure)` ·
+> `remove` · `remove_mapped` · `remove_with` · `remove_others` · `into_inner`
 
 The rows below cover the extractable methods that are unlocked by specific trait impls.
 `✓` = available · `✗` = not available · `(blanket)` = provided automatically, no extra code · `N` = once per variant/selector

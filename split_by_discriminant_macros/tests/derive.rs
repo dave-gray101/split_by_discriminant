@@ -19,10 +19,10 @@ fn derive_extract_from_multiple_variants() {
     let mut ex = SplitWithExtractor::new(split, EExtractor);
 
     // SimpleExtractFrom is not generated (multiple variants), but VariantExtractFrom is.
-    let ints: Vec<&mut i32> = ex.extract(a_disc).unwrap();
+    let ints: Vec<&mut i32> = ex.as_mut(a_disc).unwrap();
     assert_eq!(ints.len(), 2);
 
-    let strs: Vec<&mut String> = ex.extract(b_disc).unwrap();
+    let strs: Vec<&mut String> = ex.as_mut(b_disc).unwrap();
     assert_eq!(strs.len(), 1);
 }
 
@@ -38,7 +38,7 @@ fn derive_extract_from_multi_field() {
     let mut ex = SplitWithExtractor::new(split, MultiExtractor);
 
     // Multi-field variant yields an ExtractFrom impl with a selector.
-    let pairs: Vec<(&mut i32, &mut String)> = ex.extract_gat::<SelectMultiA>(a_disc).unwrap();
+    let pairs: Vec<(&mut i32, &mut String)> = ex.as_mut_with::<SelectMultiA>(a_disc).unwrap();
     assert_eq!(pairs.len(), 1);
     assert_eq!(*pairs[0].0, 1);
 }
@@ -54,8 +54,8 @@ fn derive_extract_from_single_variant() {
     let split = split_by_discriminant(&mut data, &[a_disc]);
     let mut ex = SplitWithExtractor::new(split, SingleExtractor);
 
-    // Should generate SimpleExtractFrom and allow extract_simple without annotation.
-    let ints = ex.extract_simple(a_disc).unwrap();
+    // Should generate SimpleExtractFrom and allow as_mut_simple without annotation.
+    let ints = ex.as_mut_simple(a_disc).unwrap();
     assert_eq!(ints, vec![&mut 4, &mut 5]);
 }
 
@@ -73,7 +73,7 @@ fn derive_extract_from_custom_extractor_name() {
     let split = split_by_discriminant(&mut data, &[a_disc]);
     let mut ex = SplitWithExtractor::new(split, CustomExtractor);
 
-    let ints = ex.extract_simple(a_disc).unwrap();
+    let ints = ex.as_mut_simple(a_disc).unwrap();
     assert_eq!(ints, vec![&mut 1, &mut 2]);
 }
 
@@ -89,7 +89,7 @@ fn derive_extract_from_formatted_extractor_name() {
     let split = split_by_discriminant(&mut data, &[a_disc]);
     let mut ex = SplitWithExtractor::new(split, CustomFormattedExtractor);
 
-    let ints = ex.extract_simple(a_disc).unwrap();
+    let ints = ex.as_mut_simple(a_disc).unwrap();
     assert_eq!(ints, vec![&mut 1, &mut 2]);
 }
 
@@ -105,7 +105,7 @@ fn derive_extract_from_formatted_enum_extractor_name() {
     let split = split_by_discriminant(&mut data, &[a_disc]);
     let mut ex = SplitWithExtractor::new(split, CustomFormattedEnumPlaceholderExtractor);
 
-    let ints = ex.extract_simple(a_disc).unwrap();
+    let ints = ex.as_mut_simple(a_disc).unwrap();
     assert_eq!(ints, vec![&mut 1, &mut 2]);
 }
 
@@ -125,7 +125,7 @@ fn derive_extract_from_variant_selector_override() {
     let split = split_by_discriminant(&mut data, &[a_disc]);
     let mut ex = SplitWithExtractor::new(split, PerVariantSelectorExtractor);
 
-    let pairs: Vec<(&mut i32, &mut String)> = ex.extract_gat::<MySelector>(a_disc).unwrap();
+    let pairs: Vec<(&mut i32, &mut String)> = ex.as_mut_with::<MySelector>(a_disc).unwrap();
     assert_eq!(pairs.len(), 1);
 }
 
@@ -141,7 +141,7 @@ fn derive_extract_from_global_selector_format() {
     let split = split_by_discriminant(&mut data, &[a_disc]);
     let mut ex = SplitWithExtractor::new(split, GlobalSelectorFormatExtractor);
 
-    let pairs: Vec<(&mut i32, &mut String)> = ex.extract_gat::<CustomGlobalSelectorFormatA>(a_disc).unwrap();
+    let pairs: Vec<(&mut i32, &mut String)> = ex.as_mut_with::<CustomGlobalSelectorFormatA>(a_disc).unwrap();
     assert_eq!(pairs.len(), 1);
 }
 
@@ -172,7 +172,92 @@ fn proc_macro_make_extractor_auto_names() {
     let disc = discriminant(&SingleMake::A(0));
 
     let mut ex = make_single_make_extractor(&mut data[..], &[disc]);
-    let ints: Vec<&mut i32> = ex.extract_simple(disc).unwrap();
+    let ints: Vec<&mut i32> = ex.as_mut_simple(disc).unwrap();
     assert_eq!(ints.len(), 2);
+}
+
+// ── Read-only trait generation ────────────────────────────────────────────────
+
+/// Strategy::Simple generates SimpleReadFrom — callable on a shared-slice map
+/// with &self and yielding &i32 without any mutable borrow.
+#[test]
+fn derive_simple_read_from_immutable_map() {
+    let data = [Single::A(10), Single::A(20)];
+    let disc = discriminant(&Single::A(0));
+
+    let split = split_by_discriminant(&data[..], &[disc]);
+    let ex = SplitWithExtractor::new(split, SingleExtractor);
+
+    // &self receiver, no mut, G = &Single (Borrow<Single> only)
+    let ints: Vec<&i32> = ex.as_ref_simple(disc).unwrap();
+    assert_eq!(ints, vec![&10, &20]);
+}
+
+/// Strategy::Variant generates VariantReadFrom for each variant — both types
+/// readable from a shared-slice map without turbofish.
+#[test]
+fn derive_variant_read_from_immutable_map() {
+    let data = [E::A(1), E::B("hello".into()), E::A(2), E::C];
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let split = split_by_discriminant(&data[..], &[a_disc, b_disc]);
+    let ex = SplitWithExtractor::new(split, EExtractor);
+
+    let ints: Vec<&i32> = ex.as_ref(a_disc).unwrap();
+    assert_eq!(ints.len(), 2);
+
+    let strs: Vec<&String> = ex.as_ref(b_disc).unwrap();
+    assert_eq!(strs.len(), 1);
+    assert_eq!(strs[0], "hello");
+}
+
+/// Strategy::Extract generates ReadFrom with the same selector types — readable
+/// from a shared-slice map using as_ref_with.
+#[test]
+fn derive_read_from_multi_field_immutable_map() {
+    let data = [Multi::A(3, "x".into()), Multi::B(9)];
+    let a_disc = discriminant(&Multi::A(0, "".into()));
+
+    let split = split_by_discriminant(&data[..], &[a_disc]);
+    let ex = SplitWithExtractor::new(split, MultiExtractor);
+
+    let pairs: Vec<(&i32, &String)> = ex.as_ref_with::<SelectMultiA>(a_disc).unwrap();
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(*pairs[0].0, 3);
+    assert_eq!(pairs[0].1, "x");
+}
+
+// ── make_extractor! ref_fn_name ───────────────────────────────────────────────
+
+#[derive(Debug, PartialEq, ExtractFrom)]
+enum ReadOnlyMake { A(i32) }
+
+make_extractor! {
+    ReadOnlyMake,
+    extractor = ReadOnlyMakeExtractor,
+    fn_name = make_read_only_make_mut,
+    ref_fn_name = make_read_only_make_ref
+}
+
+#[test]
+fn make_extractor_ref_fn_name_shared_slice() {
+    let data = [ReadOnlyMake::A(5), ReadOnlyMake::A(6)];
+    let disc = discriminant(&ReadOnlyMake::A(0));
+
+    // ref variant accepts &data[..] (G = &ReadOnlyMake, Borrow only)
+    let ex = make_read_only_make_ref(&data[..], &[disc]);
+    let ints: Vec<&i32> = ex.as_ref_simple(disc).unwrap();
+    assert_eq!(ints, vec![&5, &6]);
+}
+
+#[test]
+fn make_extractor_mut_fn_still_works_alongside_ref() {
+    let mut data = [ReadOnlyMake::A(7), ReadOnlyMake::A(8)];
+    let disc = discriminant(&ReadOnlyMake::A(0));
+
+    let mut ex = make_read_only_make_mut(&mut data[..], &[disc]);
+    let ints: Vec<&mut i32> = ex.as_mut_simple(disc).unwrap();
+    assert_eq!(ints, vec![&mut 7, &mut 8]);
 }
 

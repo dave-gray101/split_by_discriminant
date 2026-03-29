@@ -80,12 +80,12 @@ fn app_extractor_works_on_foo() {
     let mut ex = SplitWithExtractor::new(split, AppExtractor);
 
     {
-        let mut ints: Vec<&mut i32> = ex.extract_gat::<SelectFooA>(a_disc).unwrap();
+        let mut ints: Vec<&mut i32> = ex.as_mut_with::<SelectFooA>(a_disc).unwrap();
         assert_eq!(ints.len(), 2);
         *ints[0] += 10;
     }
     {
-        let mut strings: Vec<&mut String> = ex.extract_gat::<SelectFooB>(b_disc).unwrap();
+        let mut strings: Vec<&mut String> = ex.as_mut_with::<SelectFooB>(b_disc).unwrap();
         assert_eq!(strings.len(), 1);
         strings[0].push_str("!");
     }
@@ -111,12 +111,12 @@ fn app_extractor_works_on_ip_addr() {
     let mut ex = SplitWithExtractor::new(split, AppExtractor);
 
     {
-        let mut v4s: Vec<&mut Ipv4Addr> = ex.extract_gat::<SelectV4>(v4_disc).unwrap();
+        let mut v4s: Vec<&mut Ipv4Addr> = ex.as_mut_with::<SelectV4>(v4_disc).unwrap();
         assert_eq!(v4s.len(), 2);
         *v4s[0] = Ipv4Addr::new(10, 0, 0, 1);
     }
     {
-        let v6s: Vec<&mut Ipv6Addr> = ex.extract_gat::<SelectV6>(v6_disc).unwrap();
+        let v6s: Vec<&mut Ipv6Addr> = ex.as_mut_with::<SelectV6>(v6_disc).unwrap();
         assert_eq!(v6s.len(), 1);
     }
 
@@ -135,7 +135,7 @@ fn same_test_uses_app_extractor_for_two_distinct_types() {
     let foo_ints: Vec<i32> = {
         let split = split_by_discriminant(&mut foos, &[a_disc]);
         let mut ex = SplitWithExtractor::new(split, AppExtractor);
-        let mut refs: Vec<&mut i32> = ex.extract_gat::<SelectFooA>(a_disc).unwrap();
+        let mut refs: Vec<&mut i32> = ex.as_mut_with::<SelectFooA>(a_disc).unwrap();
         refs.iter_mut().map(|r| **r).collect()
     };
     assert_eq!(foo_ints, [7, 8]);
@@ -150,7 +150,7 @@ fn same_test_uses_app_extractor_for_two_distinct_types() {
     let v4_count = {
         let split = split_by_discriminant(&mut addrs, &[v4_disc]);
         let mut ex = SplitWithExtractor::new(split, AppExtractor);
-        ex.extract_gat::<SelectV4>(v4_disc).unwrap().len()
+        ex.as_mut_with::<SelectV4>(v4_disc).unwrap().len()
     };
     assert_eq!(v4_count, 1);
 }

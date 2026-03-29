@@ -222,3 +222,212 @@ fn take_from_blanket_works_for_foreign_enum() {
     drop(v4s);
     assert_eq!(addrs[0], IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
 }
+
+// ── take_multiple_simple tests ────────────────────────────────────────────────
+
+#[test]
+fn take_multiple_simple_extracts_multiple_groups() {
+    // Test that take_multiple_simple removes and extracts from multiple groups
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2), E::A(3)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, TakeSimpleExtractor);
+
+    // take_multiple_simple should extract from the requested group
+    let results = ex.take_multiple_simple(&[a_disc]);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results.get(&a_disc).unwrap().len(), 3);
+
+    // Group should be removed after take
+    assert!(ex.get(a_disc).is_none());
+}
+
+#[test]
+fn take_multiple_simple_partial_match() {
+    // Test that only present discriminants are extracted and removed
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(5), E::A(10)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, TakeSimpleExtractor);
+
+    // Request both A and B, but only A is in the split
+    let results = ex.take_multiple_simple(&[a_disc, b_disc]);
+
+    assert_eq!(results.len(), 1);
+    assert!(results.contains_key(&a_disc));
+    assert!(!results.contains_key(&b_disc));
+}
+
+#[test]
+fn take_multiple_simple_empty_ids() {
+    // Test with empty ids slice
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, TakeSimpleExtractor);
+
+    let results = ex.take_multiple_simple(&[]);
+
+    assert_eq!(results.len(), 0);
+}
+
+// ── take_multiple_extracted tests ─────────────────────────────────────────────
+
+struct MultiExtractor;
+
+impl SimpleExtractFrom<E> for MultiExtractor {
+    type Output = i32;
+    fn extract_from<'a>(&self, t: &'a mut E) -> Option<&'a mut i32> {
+        if let E::A(v) = t { Some(v) } else { None }
+    }
+}
+
+// The blanket impl automatically provides VariantExtractFrom<E, i32>
+// and ExtractFrom<E, ()> from SimpleExtractFrom, so we don't need to implement them.
+
+#[test]
+fn take_multiple_extracted_removes_and_extracts() {
+    // Test that take_multiple_extracted removes groups and extracts values
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2), E::A(3)];
+
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, MultiExtractor);
+
+    let results = ex.take_multiple_extracted::<()>(&[a_disc]);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results.get(&a_disc).unwrap().len(), 3);
+
+    // Group should be removed
+    drop(results);
+    assert!(ex.get(a_disc).is_none());
+}
+
+#[test]
+fn take_multiple_extracted_partial_match() {
+    // Test with multiple discriminants where some exist
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::A(2)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, MultiExtractor);
+
+    let results = ex.take_multiple_extracted::<()>(&[a_disc, b_disc]);
+
+    assert_eq!(results.len(), 1);
+    assert!(results.contains_key(&a_disc));
+}
+
+// ── extract_multiple_with delegation tests ────────────────────────────────────
+
+#[test]
+fn extract_multiple_with_extracts_without_removing() {
+    // Test that extract_multiple_with doesn't remove groups
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, TakeSimpleExtractor);
+
+    let results = ex.extract_multiple_with(&[a_disc], |e| {
+        if let E::A(v) = e { Some(*v) } else { None }
+    });
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results.get(&a_disc).unwrap(), &[1, 2]);
+
+    // Group should still be present
+    assert_eq!(ex.get(a_disc).unwrap().len(), 2);
+
+    // Can extract again
+    let results2 = ex.extract_multiple_with(&[a_disc], |e| {
+        if let E::A(v) = e { Some(*v * 10) } else { None }
+    });
+
+    assert_eq!(results2.get(&a_disc).unwrap(), &[10, 20]);
+}
+
+#[test]
+fn extract_multiple_with_partial_match() {
+    // Test with some discriminants not in split
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(5), E::A(10)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, TakeSimpleExtractor);
+
+    let results = ex.extract_multiple_with(&[a_disc, b_disc], |e| {
+        if let E::A(v) = e { Some(*v) } else { None }
+    });
+
+    assert_eq!(results.len(), 1);
+    assert!(results.contains_key(&a_disc));
+}
+
+// ── remove_multiple delegation tests ──────────────────────────────────────────
+
+#[test]
+fn remove_multiple_delegation_removes_groups() {
+    // Test that remove_multiple delegates correctly to the inner map
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+    let mut ex = SplitWithExtractor::new(split, TakeSimpleExtractor);
+
+    let removed = ex.remove_multiple(&[a_disc, b_disc]);
+
+    assert_eq!(removed.len(), 2);
+    assert_eq!(removed.get(&a_disc).unwrap().len(), 2);
+    assert_eq!(removed.get(&b_disc).unwrap().len(), 1);
+}
+
+// ── remove_multiple_mapped delegation tests ──────────────────────────────────
+
+#[test]
+fn remove_multiple_mapped_delegation_transforms_groups() {
+    // Test that remove_multiple_mapped delegates correctly
+    let a_disc = discriminant(&E::A(0));
+    let b_disc = discriminant(&E::B(String::new()));
+
+    let mut data = [E::A(1), E::B("hi".into()), E::A(2)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc, b_disc]);
+    let mut ex = SplitWithExtractor::new(split, TakeSimpleExtractor);
+
+    let transformed = ex.remove_multiple_mapped(&[a_disc, b_disc], |e| match e {
+        E::A(v) => *v * 10,
+        E::B(s) => s.len() as i32,
+        E::C => 0,
+    });
+
+    assert_eq!(transformed.get(&a_disc).unwrap(), &[10, 20]);
+    assert_eq!(transformed.get(&b_disc).unwrap(), &[2]);
+}
+
+// ── remove_multiple_with delegation tests ────────────────────────────────────
+
+#[test]
+fn remove_multiple_with_delegation_filters_and_transforms() {
+    // Test that remove_multiple_with delegates correctly with filtering
+    let a_disc = discriminant(&E::A(0));
+
+    let mut data = [E::A(1), E::A(2), E::A(3), E::A(4)];
+    let split = split_by_discriminant(&mut data[..], &[a_disc]);
+    let mut ex = SplitWithExtractor::new(split, TakeSimpleExtractor);
+
+    // Keep only even values
+    let filtered = ex.remove_multiple_with(&[a_disc], |e| match e {
+        E::A(v) if *v % 2 == 0 => Some(*v * 100),
+        _ => None,
+    });
+
+    assert_eq!(filtered.get(&a_disc).unwrap(), &[200, 400]);
+}

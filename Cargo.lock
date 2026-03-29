@@ -49,6 +49,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime-macros"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34bef7b9430b9f9e666d930202e1344765b623203affe2f779bcd1f269384248"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "split_by_discriminant"
 version = "0.5.7"
 dependencies = [
@@ -65,6 +76,7 @@ version = "0.1.7"
 dependencies = [
  "proc-macro2",
  "quote",
+ "runtime-macros",
  "split_by_discriminant",
  "syn",
 ]
